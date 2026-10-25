@@ -54,7 +54,10 @@ final class Services: ObservableObject {
         self.source = source; self.frameSource = frameSource; self.perception = perception; self.audioInput = audioInput; self.transcriber = transcriber; self.speaker = speaker; self.cuePolicy = cuePolicy; self.cueGate = cueGate; self.peopleStore = peopleStore; self.contacts = contacts; self.nameExtractor = nameExtractor; self.yesNo = yesNo; self.consentFlow = consentFlow; self.commandSources = commandSources
     }
 
+    /// Real perception (S2), audio/voice/speech (S3) and glasses (S6). The consent flow, router and JSON people store
+    /// are built by `FlowRuntime` (S4) on top of these, which is why `consentFlow`/`peopleStore` stay as stand-ins here.
     static func make(source: Source, state: AppState) -> Services {
+        let defaults = UserDefaults.standard
         let frameSource: FrameSource
         switch source {
         case .phone:
@@ -64,11 +67,55 @@ final class Services: ObservableObject {
         case let .fixture(name):
             frameSource = VideoFileFrameSource(fixtureNamed: name) ?? SilentFrameSource()
         }
-        let perception = ScriptedPerception()
-        let speaker = LogSpeaker(speakAloud: state.speakLogSpeakerAloud)
-        let transcriber = FakeTranscriber(transcriptNamed: "conversation") ?? FakeTranscriber(text: "")
-        let store = InMemoryPeopleStore()
-        return Services(source: source, frameSource: frameSource, perception: perception, audioInput: SilentAudioInput(), transcriber: transcriber, speaker: speaker, cuePolicy: PassThroughCuePolicy(), cueGate: CueGate(), peopleStore: store, contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: [])
+
+        let useScripted = defaults.bool(forKey: "useScriptedPerception")
+        let threshold = defaults.object(forKey: UserSettings.matchThreshold) as? Float ?? 0.40
+        let perception: Perception = useScripted ? ScriptedPerception() : PerceptionFactory.make(embedder: PerceptionFactory.defaultEmbedder(), threshold: threshold)
+
+        let engine = AudioFactory.makeEngine(route: AudioRoute(storageKey: defaults.string(forKey: UserSettings.audioRoute)) ?? .phoneMicGlassesA2DP)
+        do { try engine.start() } catch { NSLog("[Services] audio engine start failed: %@", "\(error)") }
+        if let glasses = frameSource as? GlassesStreamCoordinator {
+            Task.detached { [weak engine] in for await active in glasses.streamingChanges() { engine?.glassesStreamActive = active } }
+        }
+
+        let speaker: Speaker
+        if defaults.string(forKey: UserSettings.voiceProvider) == "log" {
+            speaker = LogSpeaker(speakAloud: state.speakLogSpeakerAloud)
+        } else {
+            let useEleven = defaults.string(forKey: UserSettings.voiceProvider) != "apple"
+            speaker = VoiceFactory.makeSpeaker(apiKey: useEleven ? Secrets.elevenLabsAPIKey : nil, playback: engine)
+        }
+
+        let vad = AudioFactory.makeVoiceActivity(audio: engine.rawInput)
+        // MARK: S7 — who is talking to me. VAD `.other` speech + mouth-openness variance of known, facing tracks
+        // → `speakingStarted` once per track-session. Lives on the real pipeline only (ScriptedPerception scripts it).
+        if let pipeline = perception as? PerceptionPipeline {
+            let activeSpeaker = ActiveSpeaker()
+            activeSpeaker.attach(vad)
+            pipeline.activeSpeaker = activeSpeaker
+        }
+        // MARK: end S7
+        let transcriber: Transcriber
+        #if targetEnvironment(simulator)
+        transcriber = FakeTranscriber(transcriptNamed: "conversation") ?? FakeTranscriber(text: "")
+        #else
+        transcriber = SpeechFactory.makeTranscriber(speakerGuess: { vad.guess(at: $0) }, speechDetected: nil)
+        #endif
+        let commands: [CommandSource] = [SpeechFactory.makeCommandSource(transcriber: transcriber)]
+
+        return Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: InMemoryPeopleStore(), contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
+    }
+}
+
+extension AudioRoute {
+    init?(storageKey: String?) {
+        switch storageKey {
+        case "phoneMicGlassesA2DP": self = .phoneMicGlassesA2DP
+        case "glassesHFP": self = .glassesHFP
+        case "glassesStreamMic": self = .glassesStreamMic
+        case "phoneOnly": self = .phoneOnly
+        default: return nil
+        }
     }
 }
 

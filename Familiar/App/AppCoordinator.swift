@@ -23,10 +23,14 @@ final class AppCoordinator: ObservableObject {
     private weak var state: AppState?
     private var frameTimes: [TimeInterval] = []
 
+    /// True when the app is only the XCTest host: the live pipeline stays off so background tasks never interfere with tests.
+    static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
+
     func boot(state: AppState) async {
         guard self.state == nil else { return }
         self.state = state
         isReady = true
+        if Self.isRunningTests { log("test host: pipeline not started"); return }
         await restart(source: state.source)
     }
 
