@@ -1,52 +1,128 @@
 import SwiftUI
+import UIKit
 
-/// Familiar's visual language: dark-first and high contrast for a bright hackathon hall, one colour per meaning,
-/// huge touch targets, rounded type. Liquid Glass on iOS 26, plain materials before that.
-enum FamiliarTheme {
-    static let background = Color(red: 0.05, green: 0.05, blue: 0.06)
-    /// A consented person. Also the "listening" state.
-    static let known = Color(red: 0.36, green: 0.93, blue: 0.56)
-    /// "A person": never a name, never a description.
-    static let unknown = Color(white: 0.66)
-    /// Consent flow and system chrome.
-    static let consent = Color(red: 0.42, green: 0.66, blue: 1.00)
-    static let danger = Color(red: 1.00, green: 0.42, blue: 0.40)
-    static let cardRadius: CGFloat = 24
-    /// Minimum height of anything the wearer taps without looking.
-    static let minTarget: CGFloat = 88
+/// Familiar's visual language (docs/DESIGN_SPEC.md v1.2): warm ivory canvas, editorial type, white surfaces with
+/// 26 pt corners, one accent per meaning, pill controls, and Mimo as the only luminous object on a screen.
+/// Every colour has a light and a dark value; nothing is communicated by colour alone.
+enum FamiliarPalette {
+    static let canvas = dynamic("#F7F8F5", "#101116")
+    static let canvasSecondary = dynamic("#EEEDEA", "#191B22")
+    static let surface = dynamic("#FFFFFF", "#24262F")
+    static let ink = dynamic("#172236", "#F7F7F9")
+    static let inkSecondary = dynamic("#576477", "#CED0DA")
+    static let stroke = dynamic("#E4E5E8", "#393B47")
+    /// Active controls and the consent flow.
+    static let ocean = dynamic("#2779E7", "#91B8FF")
+    /// Companion pigment.
+    static let lilac = dynamic("#A08EF4", "#C3B2FF")
+    /// Companion pigment; a consented person.
+    static let mint = dynamic("#75D9CF", "#70DBD5")
+    static let peach = dynamic("#F5C9AC", "#F5B7AE")
+    static let success = dynamic("#127353", "#79E4BB")
+    static let warning = dynamic("#925A12", "#FFD18A")
+    static let danger = dynamic("#B42336", "#FF929C")
+
+    static let heroRadius: CGFloat = 32
+    static let cardRadius: CGFloat = 26
+    static let controlRadius: CGFloat = 18
+    static let margin: CGFloat = 22
+
+    private static func dynamic(_ light: String, _ dark: String) -> Color {
+        Color(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? UIColor(familiarHex: dark) : UIColor(familiarHex: light)
+        })
+    }
 }
 
-extension Font {
-    static let familiarHero = Font.system(.largeTitle, design: .rounded).weight(.bold)
-    static let familiarTitle = Font.system(.title2, design: .rounded).weight(.semibold)
-    static let familiarBody = Font.system(.body, design: .rounded)
-    static let familiarCaption = Font.system(.footnote, design: .rounded).weight(.medium)
-    static let familiarMono = Font.system(.footnote, design: .monospaced)
+extension UIColor {
+    convenience init(familiarHex hex: String) {
+        var value: UInt64 = 0
+        Scanner(string: hex.replacingOccurrences(of: "#", with: "")).scanHexInt64(&value)
+        self.init(red: CGFloat((value >> 16) & 0xFF) / 255,
+                  green: CGFloat((value >> 8) & 0xFF) / 255,
+                  blue: CGFloat(value & 0xFF) / 255,
+                  alpha: 1)
+    }
 }
 
-/// Liquid Glass on iOS 26; a material with a hairline on earlier systems.
-struct GlassCard: ViewModifier {
-    var radius: CGFloat = FamiliarTheme.cardRadius
-    var tint: Color? = nil
+/// Text styles scale with Dynamic Type. SF Pro for reading; SF Rounded only for Mimo's own lines.
+enum FamiliarType {
+    static let display = Font.system(.largeTitle, weight: .semibold)
+    static let titleXL = Font.system(.title, weight: .semibold)
+    static let title = Font.system(.title2, weight: .semibold)
+    static let body = Font.system(.body)
+    static let supporting = Font.system(.subheadline)
+    static let micro = Font.system(.footnote, weight: .medium)
+    static let companion = Font.system(.title3, design: .rounded, weight: .medium)
+    static let mono = Font.system(.footnote, design: .monospaced)
+}
+
+/// A white card on the ivory canvas: 26 pt corners, hairline stroke, an ultra-soft shadow.
+struct SurfaceCard: ViewModifier {
+    var radius: CGFloat = FamiliarPalette.cardRadius
+    var padding: CGFloat = 20
 
     func body(content: Content) -> some View {
-        if #available(iOS 26, *) {
-            content.glassEffect(tint.map { Glass.regular.tint($0) } ?? Glass.regular, in: .rect(cornerRadius: radius))
-        } else {
-            content
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder((tint ?? .white).opacity(0.18), lineWidth: 1))
-        }
+        content
+            .padding(padding)
+            .background(FamiliarPalette.surface, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(FamiliarPalette.stroke, lineWidth: 1))
+            .shadow(color: Color.black.opacity(0.05), radius: 12, y: 4)
     }
 }
 
 extension View {
-    func glassCard(radius: CGFloat = FamiliarTheme.cardRadius, tint: Color? = nil) -> some View {
-        modifier(GlassCard(radius: radius, tint: tint))
+    func surfaceCard(radius: CGFloat = FamiliarPalette.cardRadius, padding: CGFloat = 20) -> some View {
+        modifier(SurfaceCard(radius: radius, padding: padding))
     }
 
-    /// Every Familiar screen: near-black background, always dark so colours read the same on the table.
-    func familiarScreen() -> some View {
-        background(FamiliarTheme.background.ignoresSafeArea()).preferredColorScheme(.dark)
+    /// Every Familiar screen sits on the ivory canvas and follows the system appearance.
+    func familiarCanvas() -> some View {
+        background(FamiliarPalette.canvas.ignoresSafeArea())
+    }
+}
+
+// MARK: - Pill controls
+
+/// The one solid pill on a screen: ink fill, 56 pt tall.
+struct PrimaryPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(FamiliarType.title)
+            .foregroundStyle(FamiliarPalette.surface)
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(FamiliarPalette.ink, in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+/// Ocean-filled pill for the one accent action (Yes on the consent card).
+struct AccentPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(FamiliarType.title)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(FamiliarPalette.ocean, in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
+    }
+}
+
+/// White pill with a hairline, for secondary actions.
+struct GhostPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(FamiliarType.body.weight(.medium))
+            .foregroundStyle(FamiliarPalette.ink)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(FamiliarPalette.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(FamiliarPalette.stroke, lineWidth: 1))
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.1), value: configuration.isPressed)
     }
 }

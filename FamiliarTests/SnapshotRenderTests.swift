@@ -6,7 +6,7 @@ import UIKit
 /// Renders the demo screens to PNG so people without Xcode can look at them. Run:
 ///   SNAPSHOT_DIR=$PWD/docs/snapshots xcodebuild -scheme Familiar -destination 'platform=iOS Simulator,name=iPhone 17' \
 ///     -only-testing:FamiliarTests/SnapshotRenderTests CODE_SIGNING_ALLOWED=NO test
-/// The PNGs are also attached to the test report.
+/// The PNGs are also attached to the test report. Mimo renders its still pose (Canvas animations do not advance here).
 @MainActor
 final class SnapshotRenderTests: XCTestCase {
     func testRenderDemoScreens() throws {
@@ -17,13 +17,20 @@ final class SnapshotRenderTests: XCTestCase {
             ("consent-card", AnyView(ConsentCardView(state: .listening,
                                                      question: Phrasebook.consentQuestion(userName: "Priya", name: "Marcus"),
                                                      onAnswer: { _ in }, onCancel: {}))),
-            ("judge-stage", AnyView(JudgeStageView(tracks: SnapshotSamples.tracks, preview: nil, fps: 24,
-                                                   route: "phone mic + glasses", micLevel: 0.6, consent: "idle",
-                                                   cues: ["Normal mode.", "Three people.", "Marcus, ahead, close."]))),
-            ("home", AnyView(HomeView().environmentObject(AppState(defaults: defaults)).environmentObject(AppCoordinator()))),
+            ("room-stage", AnyView(JudgeStageView(tracks: SnapshotSamples.tracks, preview: nil, fps: 24,
+                                                  route: "phone mic + glasses", micLevel: 0.6, consent: "idle",
+                                                  cues: ["Normal mode.", "Three people.", "Marcus, ahead, close."]))),
+            ("today", AnyView(HomeView()
+                .environmentObject(AppState(defaults: defaults))
+                .environmentObject(AppCoordinator())
+                .environmentObject(FlowRuntime()))),
+            ("mimo", AnyView(VStack(spacing: 24) {
+                MimoView(state: .idle, size: 200)
+                MimoStatusLine(state: .idle)
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).familiarCanvas())),
         ]
         for (name, view) in screens {
-            let renderer = ImageRenderer(content: view.frame(width: 393, height: 852).preferredColorScheme(.dark))
+            let renderer = ImageRenderer(content: view.frame(width: 393, height: 852))
             renderer.scale = 2
             guard let image = renderer.uiImage, let png = image.pngData() else {
                 XCTFail("No image rendered for \(name)")

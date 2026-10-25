@@ -1,183 +1,174 @@
 import SwiftUI
 
-/// Home: one glance (or one VoiceOver swipe) tells the wearer whether the app is listening, then the two big actions.
-/// All wiring (readiness sheet, consent cover, volume buttons, runtime binding) is unchanged from the skeleton.
+/// Today: Mimo, one headline, one big action. Silence is the default, so the screen says little.
 struct HomeView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var coordinator: AppCoordinator
-    @StateObject private var runtime = FlowRuntime()
-    @AppStorage(UserSettings.readinessDone) private var readinessDone = false
-    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
-    @State private var showReadiness = false
-    @State private var detailPerson: Person?
-    @State private var showDetail = false
-    @State private var previewConsentCard = ProcessInfo.processInfo.arguments.contains("-demoConsentCard")
-
-    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    @EnvironmentObject var runtime: FlowRuntime
+    @Environment(\.openReadiness) private var openReadiness
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    heroCard
-                    BigActionButton(title: "Who's here?",
-                                    subtitle: "Known people, then a count of the rest",
-                                    systemImage: "person.2.wave.2",
-                                    tint: FamiliarTheme.known) { whoIsHere() }
-                    BigActionButton(title: "Remember them",
-                                    subtitle: "Asks the person in front of you for permission",
-                                    systemImage: "person.badge.plus",
-                                    tint: FamiliarTheme.consent,
-                                    isEnabled: !runtime.showsConsentCard) { rememberThem() }
-                    modeCard
-                    sourceCard
-                    LazyVGrid(columns: columns, spacing: 12) {
-                        GlassTile(title: "Judge view", systemImage: "eye", detail: "Preview, cues, log",
-                                  hint: "Shows the camera preview, cues and the event log") { JudgeView().environmentObject(runtime) }
-                        GlassTile(title: "People", systemImage: "person.crop.rectangle.stack", detail: "\(runtime.people.count) remembered",
-                                  hint: "Everyone who agreed to be remembered") { PeopleView().environmentObject(runtime) }
-                        GlassTile(title: "Settings", systemImage: "gear", detail: "Voice, thresholds, keys",
-                                  hint: "Your name, voice, thresholds and keys") { SettingsView().environmentObject(runtime) }
-                        GlassTile(title: "Demo controls", systemImage: "wand.and.stars", detail: "Scripted helpers",
-                                  hint: "Scripted demo helpers for the Simulator") { DemoControlsView().environmentObject(runtime) }
-                    }
-                    Button { showReadiness = true } label: {
-                        Label("Readiness check", systemImage: "checklist")
-                            .font(.familiarBody.weight(.semibold))
-                            .frame(maxWidth: .infinity, minHeight: 56)
-                    }
-                    .buttonStyle(PressableStyle())
-                    .foregroundStyle(.primary)
-                    .glassCard(radius: 18)
-                    .accessibilityHint("Checks permissions, model and keys")
-                    if let error = coordinator.lastError {
-                        Text(error)
-                            .font(.familiarCaption)
-                            .foregroundStyle(FamiliarTheme.danger)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .glassCard(radius: 18, tint: FamiliarTheme.danger.opacity(0.3))
-                            .accessibilityLabel("Last error: \(error)")
-                    }
+        ScrollView {
+            VStack(spacing: 0) {
+                header
+                MimoView(state: mimoState, size: 230)
+                    .padding(.top, 8)
+                VStack(spacing: 10) {
+                    Eyebrow(text: state.muted ? "Paused" : "Awareness is on")
+                    Text(headline)
+                        .font(FamiliarType.titleXL)
+                        .foregroundStyle(FamiliarPalette.ink)
+                        .multilineTextAlignment(.center)
+                        .accessibilityAddTraits(.isHeader)
+                    MimoStatusLine(state: mimoState, text: support)
+                        .multilineTextAlignment(.center)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+                .padding(.horizontal, FamiliarPalette.margin)
+                .padding(.top, 4)
+
+                VStack(spacing: 12) {
+                    Button { whoIsHere() } label: { Label("Who's here?", systemImage: "person.2.wave.2") }
+                        .buttonStyle(PrimaryPillStyle())
+                        .accessibilityHint("Says the known people around you, then counts the others")
+                    HStack(spacing: 12) {
+                        Button { state.muted.toggle(); coordinator.setMuted(state.muted) } label: {
+                            Label(state.muted ? "Resume" : "Pause", systemImage: state.muted ? "play" : "pause")
+                        }
+                        .buttonStyle(GhostPillStyle())
+                        .accessibilityHint(state.muted ? "Turns cues back on" : "Stops all cues except urgent ones")
+                        Button { rememberThem() } label: { Label("Remember them", systemImage: "person.badge.plus") }
+                            .buttonStyle(GhostPillStyle())
+                            .disabled(runtime.showsConsentCard)
+                            .accessibilityHint("Asks the person in front of you for permission to remember their face")
+                    }
+                    Picker("Cue level", selection: $state.mode) {
+                        ForEach(ChatterMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityHint("Quiet says less, chatty says more")
+                    .onChange(of: state.mode) { _, mode in coordinator.setMode(mode) }
+                }
+                .padding(.horizontal, FamiliarPalette.margin)
+                .padding(.top, 24)
+
+                if let nearby = knownTracks.first {
+                    NearbyPersonCard(name: nearby.identity.name ?? "", direction: nearby.bearing.band.words, distance: nearby.distance.words, score: nearby.identity.score)
+                        .padding(.horizontal, FamiliarPalette.margin)
+                        .padding(.top, 20)
+                    Text("You can say hi first.")
+                        .font(FamiliarType.supporting)
+                        .foregroundStyle(FamiliarPalette.inkSecondary)
+                        .padding(.top, 8)
+                }
+
+                consentStatus
+                    .padding(.horizontal, FamiliarPalette.margin)
+                    .padding(.top, 16)
+
+                if let error = coordinator.lastError {
+                    Text(error)
+                        .font(FamiliarType.supporting)
+                        .foregroundStyle(FamiliarPalette.danger)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .surfaceCard(radius: FamiliarPalette.controlRadius, padding: 14)
+                        .padding(.horizontal, FamiliarPalette.margin)
+                        .padding(.top, 12)
+                        .accessibilityLabel("Last error: \(error)")
+                }
+                Spacer(minLength: 32)
             }
-            .familiarScreen()
-            .navigationTitle("Familiar")
-            .navigationDestination(isPresented: $showDetail) {
-                if let person = detailPerson { PersonDetailView(person: person).environmentObject(runtime) }
-            }
         }
-        .background(VolumeButtonObserver { pressed in
-            guard pressed else { return }
-            if volumePrimary == "rememberThem" { rememberThem() } else { whoIsHere() }
-        })
-        .fullScreenCover(isPresented: Binding(get: { runtime.showsConsentCard }, set: { if !$0 { runtime.cancelConsent() } })) {
-            ConsentCardView(state: runtime.consentState, question: consentQuestion,
-                            onAnswer: { runtime.tapAnswer(yes: $0) }, onCancel: { runtime.cancelConsent() })
-        }
-        .fullScreenCover(isPresented: $previewConsentCard) {
-            ConsentCardView(state: .listening, question: Phrasebook.consentQuestion(userName: state.userName, name: "Marcus"),
-                            onAnswer: { _ in previewConsentCard = false }, onCancel: { previewConsentCard = false })
-        }
-        .sheet(isPresented: $showReadiness) { ReadinessView(onDone: { showReadiness = false; readinessDone = true }) }
-        .onReceive(coordinator.$services) { services in
-            if let services { runtime.bind(services: services, state: state, coordinator: coordinator) }
-        }
-        .onChange(of: runtime.lastSaved) { _, person in
-            if let person { detailPerson = person; showDetail = true }
-        }
-        .onAppear { if !readinessDone { showReadiness = true } }
+        .familiarCanvas()
+        .toolbar(.hidden, for: .navigationBar)
     }
 
-    private func whoIsHere() { if runtime.router != nil { runtime.whoIsHere() } else { coordinator.whoIsHere() } }
-    private func rememberThem() { if runtime.router != nil { runtime.rememberThem() } else { coordinator.rememberThem() } }
+    // MARK: - Pieces
 
-    private var consentQuestion: String {
-        if case let .asking(name) = runtime.consentState { return Phrasebook.consentQuestion(userName: state.userName, name: name) }
-        return Phrasebook.consentQuestion(userName: state.userName, name: runtime.nameGuess?.name)
-    }
-
-    // MARK: - Cards
-
-    private var heroCard: some View {
-        let services = coordinator.services
-        let route = services?.audioInput.route.title ?? "–"
-        let level = services?.audioInput.micLevel ?? 0
-        let accent = state.muted ? FamiliarTheme.danger : FamiliarTheme.known
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(state.muted ? "Muted" : "Listening")
-                    .font(.familiarHero)
-                    .foregroundStyle(accent)
-                    .contentTransition(.opacity)
-                Spacer()
-                MicMeter(level: level, color: accent)
-            }
-            Text("\(state.mode.title) mode · \(state.source.title) · \(route)")
-                .font(.familiarBody)
-                .foregroundStyle(.secondary)
-            consentStatus
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard()
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Status: \(state.muted ? "muted" : "listening"), \(state.mode.title) mode, source \(state.source.title), audio \(route)")
-    }
-
-    private var modeCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("Mode", selection: $state.mode) {
-                ForEach(ChatterMode.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Chatter mode")
-            .accessibilityHint("Quiet says less, chatty says more")
-            .onChange(of: state.mode) { _, mode in coordinator.setMode(mode) }
-            Toggle(isOn: $state.muted) {
-                Label("Mute", systemImage: state.muted ? "speaker.slash" : "speaker.wave.2").font(.familiarBody.weight(.semibold))
-            }
-            .tint(FamiliarTheme.danger)
-            .accessibilityHint("Stops all cues except urgent ones")
-            .onChange(of: state.muted) { _, muted in coordinator.setMuted(muted) }
-        }
-        .padding(16)
-        .glassCard()
-    }
-
-    private var sourceCard: some View {
+    private var header: some View {
         HStack {
-            Label("Source", systemImage: "video").font(.familiarBody.weight(.semibold))
+            Text("Familiar")
+                .font(FamiliarType.title)
+                .foregroundStyle(FamiliarPalette.ink)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
-            Picker("Source", selection: $state.source) {
-                Text("Phone camera").tag(Services.Source.phone)
-                Text("Glasses").tag(Services.Source.glasses)
-                ForEach(VideoFileFrameSource.availableFixtures(), id: \.self) { name in
-                    Text("Fixture: \(name)").tag(Services.Source.fixture(name))
-                }
+            Button(action: openReadiness) {
+                StatusChip(text: deviceLabel, systemImage: deviceSymbol, tint: FamiliarPalette.ink)
             }
-            .pickerStyle(.menu)
-            .accessibilityLabel("Video source")
-            .accessibilityHint("Phone camera, glasses, or a bundled test clip")
-            .onChange(of: state.source) { _, source in Task { await coordinator.restart(source: source) } }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Device: \(deviceLabel). Opens the readiness checklist")
         }
-        .padding(16)
-        .glassCard()
+        .padding(.horizontal, FamiliarPalette.margin)
+        .padding(.top, 12)
+    }
+
+    private var knownTracks: [TrackSnapshot] { coordinator.tracks.filter { $0.identity.isKnown } }
+
+    private var mimoState: MimoState {
+        if state.muted { return .paused }
+        switch runtime.consentState {
+        case .asking, .listening: return .waitingForConsent
+        case .gathering: return .thinking
+        case .saving: return .thinking
+        case .done: return .success
+        default: break
+        }
+        if let last = coordinator.utterances.last, CACurrentMediaTime() - last.at < 2.5 { return .speaking }
+        if !knownTracks.isEmpty { return .cue }
+        return .idle
+    }
+
+    private var headline: String {
+        if state.muted { return "Awareness paused." }
+        if !knownTracks.isEmpty { return "You're in good company." }
+        return "Here with you."
+    }
+
+    private var support: String {
+        if state.muted { return "Resume when you're ready." }
+        if let nearby = knownTracks.first, let name = nearby.identity.name {
+            return "\(name), \(nearby.bearing.band.words), \(nearby.distance.words)."
+        }
+        return "Ask who's here, or simply enjoy the moment."
+    }
+
+    private var deviceLabel: String {
+        switch state.source {
+        case .glasses: return "Glasses"
+        case .phone: return "Phone camera"
+        case .fixture: return "Demo clip"
+        }
+    }
+
+    private var deviceSymbol: String {
+        switch state.source {
+        case .glasses: return "eyeglasses"
+        case .phone: return "iphone"
+        case .fixture: return "film"
+        }
     }
 
     @ViewBuilder private var consentStatus: some View {
         switch runtime.consentState {
         case .idle: EmptyView()
-        case .confirmingWithUser: Label("Say yes to start remembering", systemImage: "questionmark.bubble").foregroundStyle(.secondary)
-        case .gathering: Label("Looking at them…", systemImage: "viewfinder").foregroundStyle(.secondary)
-        case .asking, .listening, .saving: Label("Asking for permission…", systemImage: "waveform").foregroundStyle(FamiliarTheme.consent)
-        case let .done(person): Label("Saved \(person.name)", systemImage: "checkmark.circle").foregroundStyle(FamiliarTheme.known)
-        case .declined: Label("They said no. Nothing saved.", systemImage: "xmark.circle")
-        case let .cancelled(reason): Label("Cancelled: \(reason)", systemImage: "xmark.circle")
+        case .confirmingWithUser: statusRow("Say yes to start remembering", "questionmark.bubble")
+        case .gathering: statusRow("Looking at them…", "viewfinder")
+        case .asking, .listening, .saving: statusRow("Asking for permission…", "waveform")
+        case let .done(person): statusRow("\(person.name) chose to connect.", "checkmark.circle", tint: FamiliarPalette.success)
+        case .declined: statusRow("They said no. Nothing saved.", "xmark.circle")
+        case let .cancelled(reason): statusRow("Cancelled: \(reason)", "xmark.circle")
         }
     }
+
+    private func statusRow(_ text: String, _ symbol: String, tint: Color = FamiliarPalette.inkSecondary) -> some View {
+        Label(text, systemImage: symbol)
+            .font(FamiliarType.supporting)
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .surfaceCard(radius: FamiliarPalette.controlRadius, padding: 14)
+    }
+
+    private func whoIsHere() { if runtime.router != nil { runtime.whoIsHere() } else { coordinator.whoIsHere() } }
+    private func rememberThem() { if runtime.router != nil { runtime.rememberThem() } else { coordinator.rememberThem() } }
 }
 
 extension AudioRoute {

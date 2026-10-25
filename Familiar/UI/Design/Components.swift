@@ -1,82 +1,47 @@
 import SwiftUI
 
-/// The two things the wearer does most, big enough to hit without looking.
-struct BigActionButton: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let tint: Color
-    var isEnabled: Bool = true
-    let action: () -> Void
-
+/// Small uppercase label above a headline ("AWARENESS IS ON").
+struct Eyebrow: View {
+    let text: String
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 18) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 34, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 56)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title).font(.familiarTitle)
-                    Text(subtitle).font(.familiarBody).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.headline).foregroundStyle(.tertiary).accessibilityHidden(true)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
-            .frame(maxWidth: .infinity, minHeight: FamiliarTheme.minTarget, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: FamiliarTheme.cardRadius, style: .continuous))
-        }
-        .buttonStyle(PressableStyle())
-        .foregroundStyle(.primary)
-        .glassCard(tint: tint.opacity(0.35))
-        .disabled(!isEnabled)
-        .opacity(isEnabled ? 1 : 0.5)
-        .accessibilityLabel(title)
-        .accessibilityHint(subtitle)
+        Text(text.uppercased())
+            .font(FamiliarType.micro)
+            .tracking(1.4)
+            .foregroundStyle(FamiliarPalette.inkSecondary)
     }
 }
 
-struct PressableStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.spring(duration: 0.2), value: configuration.isPressed)
-    }
-}
-
-struct StatusPill: View {
+/// Compact pill with an icon and a word or two: device state, cue level, consent state.
+struct StatusChip: View {
     let text: String
     var systemImage: String? = nil
-    var color: Color = .secondary
+    var tint: Color = FamiliarPalette.inkSecondary
 
     var body: some View {
         HStack(spacing: 6) {
-            if let systemImage { Image(systemName: systemImage).accessibilityHidden(true) }
-            Text(text).lineLimit(1)
+            if let systemImage { Image(systemName: systemImage).font(.footnote.weight(.semibold)).accessibilityHidden(true) }
+            Text(text).font(FamiliarType.micro).lineLimit(1)
         }
-        .font(.familiarCaption)
-        .foregroundStyle(color)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .glassCard(radius: 14)
+        .foregroundStyle(tint)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(FamiliarPalette.surface, in: Capsule())
+        .overlay(Capsule().strokeBorder(FamiliarPalette.stroke, lineWidth: 1))
     }
 }
 
-/// Five bars that follow the microphone level: the on-table proof that the mic is alive.
+/// Five bars that follow the microphone level.
 struct MicMeter: View {
     let level: Float
     var bars: Int = 5
-    var color: Color = FamiliarTheme.consent
+    var color: Color = FamiliarPalette.ocean
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 3) {
             ForEach(0..<bars, id: \.self) { i in
                 let threshold = Float(i + 1) / Float(bars)
                 Capsule()
-                    .fill(level >= threshold ? color : Color.white.opacity(0.18))
+                    .fill(level >= threshold ? color : FamiliarPalette.stroke)
                     .frame(width: 5, height: 8 + CGFloat(i) * 4)
             }
         }
@@ -85,7 +50,7 @@ struct MicMeter: View {
     }
 }
 
-/// The last thing the glasses said, large, with the two before it underneath.
+/// The last thing Familiar said, large, with the two before it underneath.
 struct CueTicker: View {
     let cues: [String]
 
@@ -93,15 +58,17 @@ struct CueTicker: View {
         VStack(alignment: .leading, spacing: 4) {
             if let last = cues.last {
                 Text(last)
-                    .font(.familiarTitle)
-                    .foregroundStyle(.primary)
+                    .font(FamiliarType.companion)
+                    .foregroundStyle(FamiliarPalette.ink)
                     .contentTransition(.opacity)
                     .id(last)
             } else {
-                Text("Listening…").font(.familiarTitle).foregroundStyle(.secondary)
+                Text("We'll speak when something matters.")
+                    .font(FamiliarType.companion)
+                    .foregroundStyle(FamiliarPalette.inkSecondary)
             }
             ForEach(Array(cues.dropLast().suffix(2).reversed().enumerated()), id: \.offset) { _, cue in
-                Text(cue).font(.familiarBody).foregroundStyle(.secondary).lineLimit(1)
+                Text(cue).font(FamiliarType.supporting).foregroundStyle(FamiliarPalette.inkSecondary).lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -110,46 +77,61 @@ struct CueTicker: View {
     }
 }
 
+/// The trust line that is on every judge-facing screen.
 struct PrivacyBanner: View {
     let text: String
-
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "lock.shield").font(.title3).foregroundStyle(FamiliarTheme.consent).accessibilityHidden(true)
-            Text(text).font(.familiarCaption).multilineTextAlignment(.leading)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "lock.shield").foregroundStyle(FamiliarPalette.ocean).accessibilityHidden(true)
+            Text(text).font(FamiliarType.supporting).foregroundStyle(FamiliarPalette.inkSecondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassCard(radius: 18, tint: FamiliarTheme.consent.opacity(0.25))
+        .surfaceCard(radius: FamiliarPalette.controlRadius, padding: 14)
         .accessibilityAddTraits(.isHeader)
     }
 }
 
-/// Square glass tile for the navigation grid on Home.
-struct GlassTile<Destination: View>: View {
-    let title: String
-    let systemImage: String
-    var detail: String? = nil
-    var hint: String = ""
-    @ViewBuilder let destination: () -> Destination
+/// Soft two-colour monogram for a person without a photo.
+struct Monogram: View {
+    let name: String
+    var size: CGFloat = 44
+    var body: some View {
+        ZStack {
+            Circle().fill(LinearGradient(colors: [FamiliarPalette.mint, FamiliarPalette.lilac], startPoint: .topLeading, endPoint: .bottomTrailing))
+            Text(String(name.prefix(1)).uppercased())
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundStyle(FamiliarPalette.ink)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// One known person in the room: name, direction, distance, one action.
+struct NearbyPersonCard: View {
+    let name: String
+    let direction: String
+    let distance: String
+    var score: Float? = nil
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
 
     var body: some View {
-        NavigationLink(destination: destination) {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: systemImage).font(.title).foregroundStyle(FamiliarTheme.consent).accessibilityHidden(true)
-                Spacer(minLength: 0)
-                Text(title).font(.familiarBody.weight(.semibold))
-                if let detail { Text(detail).font(.familiarCaption).foregroundStyle(.secondary) }
+        HStack(spacing: 14) {
+            Monogram(name: name)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(FamiliarType.title).foregroundStyle(FamiliarPalette.ink)
+                Text("\(direction) · \(distance)").font(FamiliarType.supporting).foregroundStyle(FamiliarPalette.inkSecondary)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: FamiliarTheme.cardRadius, style: .continuous))
+            Spacer(minLength: 8)
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(GhostPillStyle())
+                    .frame(width: 96)
+            }
         }
-        .buttonStyle(PressableStyle())
-        .foregroundStyle(.primary)
-        .glassCard()
-        .accessibilityLabel(detail.map { "\(title), \($0)" } ?? title)
-        .accessibilityHint(hint)
+        .surfaceCard(padding: 16)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name). \(direction), \(distance). Known person\(score.map { String(format: ", match %.0f percent", $0 * 100) } ?? "").")
     }
 }

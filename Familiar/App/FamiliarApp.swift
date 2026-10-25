@@ -31,6 +31,6 @@ struct FamiliarApp: App {
 struct RootView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     var body: some View {
-        if coordinator.isReady { HomeView() } else { ReadinessView() }
+        if coordinator.isReady { MainTabView() } else { ReadinessView() }
     }
 }

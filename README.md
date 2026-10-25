@@ -8,6 +8,7 @@ Start here:
 - [AGENTS.md](AGENTS.md) — shared context that every Devin session reads automatically (product rules, repo layout, Swift contracts, conventions).
 - [devin/](devin/) — one paste-ready prompt per Devin session: `01-skeleton` → `02-perception` ∥ `03-audio-speech-voice` ∥ `04-app-memory-consent` ∥ `09-modal-embedding-endpoint` ∥ `06-glasses-source` → `05-integration-demo` → `07`, `08` (stretch).
 - [TEAM_CHECKLIST.md](TEAM_CHECKLIST.md) — the human track with clock times, including the fixture-clip shooting script.
+- [docs/DESIGN_SPEC.md](docs/DESIGN_SPEC.md) — the visual and interaction design spec (ivory canvas, pill controls, Mimo the companion). The `sahas` branch implements it with the libraries.dev SwiftUI kits (`BotAvatarsKit`, `ThinkingOrbsKit`, `VoiceGlowKit`).
 
 ## Build and run
 

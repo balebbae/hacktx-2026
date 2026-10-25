@@ -12,6 +12,9 @@
 		B1B2C3D4E5F60718293A4B02 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B02 /* MWDATCamera */; };
 		B1B2C3D4E5F60718293A4B03 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */; };
 		B1B2C3D4E5F60718293A4B04 /* MWDATInputs in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B04 /* MWDATInputs */; };
+		C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB21 /* BotAvatarsKit */; };
+		C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB22 /* ThinkingOrbsKit */; };
+		C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB23 /* VoiceGlowKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +77,9 @@
 				B1B2C3D4E5F60718293A4B02 /* MWDATCamera in Frameworks */,
 				B1B2C3D4E5F60718293A4B03 /* MWDATMockDevice in Frameworks */,
 				B1B2C3D4E5F60718293A4B04 /* MWDATInputs in Frameworks */,
+				C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */,
+				C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */,
+				C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +159,9 @@
 				A1B2C3D4E5F60718293A4B02 /* MWDATCamera */,
 				A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */,
 				A1B2C3D4E5F60718293A4B04 /* MWDATInputs */,
+				C0FFEE00000000000000AB21 /* BotAvatarsKit */,
+				C0FFEE00000000000000AB22 /* ThinkingOrbsKit */,
+				C0FFEE00000000000000AB23 /* VoiceGlowKit */,
 			);
 			productName = Familiar;
 			productReference = 206921FA0F7370D6772196A6 /* Familiar.app */;
@@ -189,6 +198,7 @@
 			packageReferences = (
 				274A53CAE3C52ACB43366862 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 				5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+				C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C8FA5AF39B14B1F1DBC424DF /* Products */;
@@ -510,6 +520,14 @@
 				version = 1.0.1;
 			};
 		};
+		C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Jakubantalik/Libraries.dev";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -537,6 +555,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATInputs;
+		};
+		C0FFEE00000000000000AB21 /* BotAvatarsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = BotAvatarsKit;
+		};
+		C0FFEE00000000000000AB22 /* ThinkingOrbsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = ThinkingOrbsKit;
+		};
+		C0FFEE00000000000000AB23 /* VoiceGlowKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = VoiceGlowKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
