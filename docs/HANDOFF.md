@@ -31,3 +31,11 @@ Phone camera · Glasses · Fixture: <clip>. Glasses: Meta AI app → Settings �
 - `approach_marcus.mp4` is only 2.9 s; `no_reply.mp4` and `distance_calibration.mp4` were never recorded (tests skip).
 - Modal proxy-auth tokens must be created by a human in the Modal dashboard; the on-device embedder is the primary path.
 - Filled in by S5 with whatever the integration pass finds.
+
+## What is wired on main (S5 pass)
+- `Services.make` builds the real modules: `PerceptionFactory` (on-device `w600k_mbf.onnx`, Modal fallback when `MODAL_*` keys are present), `AudioFactory.makeEngine` (started once; the glasses streaming flag drives `glassesStreamActive`), `VoiceFactory.makeSpeaker` (ElevenLabs over the engine, Apple fallback; Settings → Voice can force Apple or the log speaker), `VoiceFactory.makeCuePolicy`, `SpeechFactory.makeTranscriber` on device (SpeechAnalyzer → SFSpeech) and `FakeTranscriber(conversation.txt)` in the Simulator, wake-word `CommandSource`.
+- `FlowRuntime` (S4) builds the consent flow, command router, `JSONPeopleStore` and `CNContactsBridge` on top of those services.
+- Demo controls → "Scripted perception" (UserDefaults `useScriptedPerception`) swaps the pipeline for `ScriptedPerception` + `script.json`; use it if the camera path misbehaves at the table.
+- `Secrets.xcconfig` also carries `DEVELOPMENT_TEAM` for device signing; the Modal URL is written `https:$()/$()/host`.
+- Tests: `AppCoordinator.isRunningTests` keeps the live pipeline off while the app is only the XCTest host. 150 tests, 2 skipped (unsigned DAT mock, live ElevenLabs prewarm) on `main`.
+- Still human-only: real glasses stream, A2DP/HFP route switching, SpeechAnalyzer asset download, Contacts/Location prompts, Vision landmarks on device (Simulator falls back to rectangle alignment).
