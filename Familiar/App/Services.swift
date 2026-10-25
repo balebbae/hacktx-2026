@@ -45,6 +45,9 @@ final class Services: ObservableObject {
     let yesNo: YesNoClassifier
     let consentFlow: ConsentFlow
     let commandSources: [CommandSource]
+    // S8 — the agent pauses/restarts the engine around a session and refuses while a glasses stream is live.
+    var agentAudio: AgentAudioControl?
+    var isGlassesStreaming: () -> Bool = { false }
 
     /// Convenience accessors for the skeleton UI (nil when the real module is wired instead).
     var logSpeaker: LogSpeaker? { speaker as? LogSpeaker }
@@ -103,7 +106,11 @@ final class Services: ObservableObject {
         #endif
         let commands: [CommandSource] = [SpeechFactory.makeCommandSource(transcriber: transcriber)]
 
-        return Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: InMemoryPeopleStore(), contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
+        let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: InMemoryPeopleStore(), contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
+        // S8
+        services.agentAudio = engine
+        services.isGlassesStreaming = { [weak engine] in engine?.glassesStreamActive ?? false }
+        return services
     }
 }
 

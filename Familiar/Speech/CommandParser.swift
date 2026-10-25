@@ -73,6 +73,22 @@ final class WakeWordCommandSource: CommandSource, @unchecked Sendable {
     func subscribe() -> AsyncStream<Command> { bus.subscribe() }
     func subscribeHits() -> AsyncStream<WakeWordHit> { hitBus.subscribe() }
 
+    // S8 — "Familiar, …" phrases the parser did not recognise fall through to the conversational agent.
+    // Recognised commands keep flowing through `subscribe()` untouched; the agent never sees them.
+    func subscribeUnparsed() -> AsyncStream<String> {
+        let hits = hitBus.subscribe()
+        return AsyncStream { cont in
+            let t = Task {
+                for await h in hits where h.command == nil {
+                    let text = h.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !text.isEmpty { cont.yield(text) }
+                }
+                cont.finish()
+            }
+            cont.onTermination = { _ in t.cancel() }
+        }
+    }
+
     /// Feeds finals (and volatile text when the transcriber offers it) into the wake word and runs its 4 s timer.
     func attach(_ transcriber: Transcriber) {
         let finals = transcriber.subscribe()

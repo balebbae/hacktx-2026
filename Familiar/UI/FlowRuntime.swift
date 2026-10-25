@@ -39,6 +39,7 @@ final class FlowRuntime: ObservableObject {
     private(set) var clipRecorder: AudioChunkClipRecorder?
     private(set) var meeting: MeetingContextProvider?
     private(set) var services: Services?
+    @Published private(set) var agent: AgentSession?          // S8
     let manualCommands = ManualCommandSource()
     private var tasks: [Task<Void, Never>] = []
     private weak var coordinator: AppCoordinator?
@@ -93,12 +94,46 @@ final class FlowRuntime: ObservableObject {
             for await _ in store.changes() { await MainActor.run { self?.people = store.all() } }
         })
         people = store.all()
+
+        // MARK: S8 — conversational agent: unparsed wake-word phrases open it, "cancel" closes it.
+        let toolRouter = AgentToolRouter(perception: s.perception, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, consentFlow: flow, cueGate: s.cueGate, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m }, lastSeen: { [weak r] in r?.lastSeen ?? [:] })
+        let session = AgentSession(router: toolRouter, speaker: s.speaker, cueGate: s.cueGate, audio: s.agentAudio, isStreaming: s.isGlassesStreaming, userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) }, starter: FlowRuntime.agentStarter)
+        agent = session
+        for case let wake as WakeWordCommandSource in s.commandSources {
+            tasks.append(Task { [weak self] in
+                for await phrase in wake.subscribeUnparsed() { await self?.openAgent(phrase: phrase) }
+            })
+        }
+        tasks.append(Task { [weak session] in
+            for await c in manualCommands.subscribe() where c == .cancel { await session?.cancel() }
+        })
+        for src in s.commandSources {
+            tasks.append(Task { [weak session] in
+                for await c in src.subscribe() where c == .cancel { await session?.cancel() }
+            })
+        }
+        // MARK: end S8
     }
 
     func tearDown() {
         tasks.forEach { $0.cancel() }; tasks.removeAll()
         router?.stop(); nameCache?.cache.stop(); clipRecorder?.stop()
         router = nil; consentFlow = nil
+        if let a = agent { Task { await a.end(reason: "teardown") } }; agent = nil   // S8
+    }
+
+    // S8
+    func openAgent(phrase: String) async {
+        coordinator?.log("agent ← \(phrase)")
+        await agent?.open(phrase: phrase)
+    }
+    static var agentStarter: AgentConversationStarter {
+        #if targetEnvironment(simulator)
+        return SimulatedAgentConversation.starter
+        #else
+        if AppCoordinator.isRunningTests { return SimulatedAgentConversation.starter }
+        return LiveAgentConversation.starter
+        #endif
     }
 
     // MARK: Actions used by the views

@@ -64,6 +64,7 @@ struct JudgeView: View {
                 micMeter
                 Spacer()
                 Text("consent: \(consentLabel)")
+                if let a = runtime.agent { AgentStatusLine(session: a) }   // S8
             }
             .font(.caption2.monospaced()).padding(6).frame(maxWidth: .infinity).background(.black.opacity(0.55)).foregroundStyle(.white)
         }
@@ -88,6 +89,7 @@ struct JudgeView: View {
                     .font(.footnote.monospaced())
                     .accessibilityLabel("Status: \(state.mode.title) mode, \(state.muted ? "muted" : "unmuted"), \(runtime.people.count) people remembered")
             }
+            if let a = runtime.agent { AgentPanel(session: a) }   // S8
             Section("Last utterances") {
                 ForEach(coordinator.utterances.suffix(3).reversed()) { e in
                     HStack {
@@ -114,4 +116,43 @@ struct JudgeView: View {
     }
 
     private var consentLabel: String { ConsentStateLabel.text(runtime.consentState) }
+}
+
+// MARK: - S8 agent status (own views so `@ObservedObject` refreshes them without Combine plumbing)
+
+struct AgentStatusLine: View {
+    @ObservedObject var session: AgentSession
+    var body: some View {
+        if session.status != .idle {
+            Text("agent: \(session.status.label)")
+                .accessibilityLabel("Agent \(session.status.label)")
+        }
+    }
+}
+
+struct AgentPanel: View {
+    @ObservedObject var session: AgentSession
+    var body: some View {
+        Section("Agent") {
+            HStack {
+                Text(session.status.label).font(.footnote.monospaced())
+                Spacer()
+                if session.status.isLive {
+                    Button("End") { Task { await session.cancel() } }
+                        .font(.footnote)
+                        .accessibilityHint("Ends the assistant session now")
+                } else {
+                    Button("Ask: how many people?") { Task { await session.open(phrase: "how many people are around me") } }
+                        .font(.footnote)
+                        .accessibilityHint("Opens a short assistant session with a scripted question")
+                }
+            }
+            ForEach(session.transcript.suffix(6)) { line in
+                Text("\(line.role.rawValue): \(line.text)").font(.footnote)
+            }
+            if !session.isConfigured {
+                Text("no ELEVENLABS_AGENT_ID in Secrets.xcconfig").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
 }
