@@ -87,6 +87,21 @@ final class SpeakerQueueTests: XCTestCase {
         XCTAssertFalse(speaker.isSpeaking)
     }
 
+    func testPriorityZeroCutsALineStillBeingSynthesized() async {
+        let (speaker, synth, playback) = makeSpeaker()
+        synth.delays["Poyo's long answer about the room."] = 5
+        let a = Task { await speaker.speak(.test("Poyo's long answer about the room.", priority: 1)) }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        let t0 = CACurrentMediaTime()
+        let z = await speaker.speak(.test("Stairs ahead.", priority: 0))
+        let aWindow = await a.value
+        XCTAssertNotNil(z)
+        XCTAssertNil(aWindow, "the stale line never plays")
+        XCTAssertLessThan(CACurrentMediaTime() - t0, 2, "the alert does not wait for the stale synthesis")
+        XCTAssertEqual(speaker.spoken.map(\.utterance.text), ["Stairs ahead."])
+        XCTAssertEqual(playback.played.count, 1)
+    }
+
     func testSpacingBetweenLowPriorityCues() async {
         let clock = ManualClock(100)
         var waits: [TimeInterval] = []

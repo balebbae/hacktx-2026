@@ -69,6 +69,7 @@ final class FallbackSynthesizer: SpeechSynthesizer, StreamingSpeechSynthesizer {
 
     func synthesize(_ text: String) async throws -> SynthesizedAudio {
         do { return try await primary.synthesize(text) } catch {
+            try Task.checkCancellation()    // the speaker dropped this line: no second voice for it
             return try await synthesizeAfterPrimaryFailed(text, error: error)
         }
     }

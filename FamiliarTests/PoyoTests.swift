@@ -358,12 +358,12 @@ final class PoyoBrainTests: XCTestCase {
         now += 7
         await heard("which side is the door")
         XCTAssertEqual(vision.prompts.count, 4, "too late: the window is 6 s")
-        brain.someoneElseTalking = { true }
+        brain.someoneElseTalking = { _ in true }
         await brain.ask("what's on the table")
         now += 2
         await heard("what do you do")
         XCTAssertEqual(vision.prompts.count, 5, "someone in view is talking to the wearer: that question is theirs")
-        brain.someoneElseTalking = { false }
+        brain.someoneElseTalking = { _ in false }
 
         vision.reply = ["say": "Which one, the door or the window?", "action": "none", "name": NSNull(), "mode": NSNull()]
         await brain.ask("what's that over there")
@@ -385,6 +385,22 @@ final class PoyoBrainTests: XCTestCase {
         now += 7
         await heard("is there a sign", .other)
         XCTAssertEqual(vision.prompts.count, 9, "and only that one")
+    }
+
+    func testSentencesSaidWhilePoyoWasBusyAreNotFollowUps() async {
+        brain.listenNext()                                   // volume button
+        now += 1
+        await brain.hear(TranscriptSegment(text: "what's on the table", start: now - 1, end: now, isFinal: true, speaker: .user))
+        XCTAssertEqual(vision.prompts.count, 1)
+        // A neighbour asked this while Poyo was thinking; the busy speech loop only delivers it now.
+        await brain.hear(TranscriptSegment(text: "which one is yours", start: now - 2, end: now - 1, isFinal: true, speaker: .other))
+        XCTAssertEqual(vision.prompts.count, 1, "said before the window opened: not a follow-up")
+        now += 2
+        var asked: [TimeInterval] = []
+        brain.someoneElseTalking = { asked.append($0); return false }
+        await brain.hear(TranscriptSegment(text: "which side is the door", start: now - 1.5, end: now, isFinal: true, speaker: .user))
+        XCTAssertEqual(vision.prompts.count, 2, "the window stayed open for the wearer's own follow-up")
+        XCTAssertEqual(asked, [now - 1.5], "the talking gate looks back over the whole sentence, not just the moment its final arrived")
     }
 
     func testTheModelSeesWhatTheAppSaidAndSayThatAgainRepeatsPoyosLastLine() async {

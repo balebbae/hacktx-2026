@@ -118,6 +118,7 @@ final class ActiveSpeakerTests: XCTestCase {
         s.noteVoice(isSpeech: false, guess: .none, t: 2.2)   // 300 ms gap between words
         XCTAssertTrue(s.otherIsSpeaking(at: 2.5))
         XCTAssertFalse(s.otherIsSpeaking(at: 2.8))
+        XCTAssertTrue(s.otherIsSpeaking(at: 1.0), "asked about an earlier moment (a sentence's start): they spoke since")
         s.noteVoice(isSpeech: true, guess: .other, t: 2.5)
         let hits = run(s, from: 2.0, to: 4.0) { now in [candidate(1, marcus, talking: true, at: now)] }
         XCTAssertEqual(hits.count, 1)
