@@ -35,7 +35,7 @@ final class PhrasebookTests: XCTestCase {
     }
 
     func testNoPhraseContainsTheWakeWord() {
-        let all = [Phrasebook.wantToRemember, Phrasebook.lookTowardMe, Phrasebook.wasThatAYes, Phrasebook.whatShouldICallYou, Phrasebook.nothingSaved, Phrasebook.theyLeft, Phrasebook.muted, Phrasebook.unmuted, Phrasebook.didNotGetThat, Phrasebook.nobody, Phrasebook.consentQuestion(userName: "Priya", name: "Marcus"), Phrasebook.saved(name: "Marcus")]
+        let all = [Phrasebook.shouldIAdd, Phrasebook.lookTowardMe, Phrasebook.wasThatAYes, Phrasebook.whatShouldICallYou, Phrasebook.nothingSaved, Phrasebook.theyLeft, Phrasebook.muted, Phrasebook.unmuted, Phrasebook.didNotGetThat, Phrasebook.nobody, Phrasebook.consentQuestion(userName: "Priya", name: "Marcus"), Phrasebook.saved(name: "Marcus")]
         for s in all { XCTAssertFalse(s.lowercased().contains("familiar"), s) }
     }
 }

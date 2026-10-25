@@ -3,23 +3,25 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var runtime: FlowRuntime
+    @EnvironmentObject var coordinator: AppCoordinator
     @AppStorage(UserSettings.voiceProvider) private var voiceProvider = "elevenlabs"
-    @AppStorage(UserSettings.embeddingProvider) private var embeddingProvider = "ondevice"
     @AppStorage(UserSettings.matchThreshold) private var matchThreshold = 0.40
-    @AppStorage(UserSettings.minFacePx) private var minFacePx = 40
     @AppStorage(UserSettings.audioRoute) private var audioRoute = "auto"
     @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
-    @AppStorage(UserSettings.cueSpeaking) private var cueSpeaking = false
-    @AppStorage(UserSettings.cueWave) private var cueWave = false
-    @AppStorage(UserSettings.cueSmile) private var cueSmile = false
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
     @State private var confirmReset = false
+    @State private var calibrating = false
+    @State private var calibration: String?
 
     var body: some View {
         Form {
             Section("You") {
                 TextField("Your name", text: $state.userName).accessibilityHint("Said in the consent question")
                 TextField("Place name (optional)", text: $state.placeName).accessibilityHint("Overrides the location name saved with each person")
+                Button { calibrate() } label: { Label(calibrating ? "Listening… keep talking" : "Calibrate my voice", systemImage: "waveform") }
+                    .disabled(calibrating || coordinator.services?.vad == nil)
+                    .accessibilityHint("Talk normally for three seconds so the app can tell your voice from other people's")
+                if let calibration { Text(calibration).font(.footnote).foregroundStyle(.secondary) }
             }
             Section("Voice") {
                 Picker("Voice", selection: $voiceProvider) {
@@ -27,9 +29,10 @@ struct SettingsView: View {
                 }
                 .accessibilityHint("ElevenLabs falls back to the Apple voice when slow")
                 Picker("Audio route", selection: $audioRoute) {
-                    Text("Automatic").tag("auto"); Text("Phone mic + glasses").tag("phoneMicGlassesA2DP"); Text("Glasses HFP").tag("glassesHFP"); Text("Glasses stream mic").tag("glassesStreamMic"); Text("Phone only").tag("phoneOnly")
+                    Text("Automatic").tag("auto"); Text("Phone mic + glasses").tag("phoneMicGlassesA2DP"); Text("Glasses HFP").tag("glassesHFP"); Text("Phone only").tag("phoneOnly")
                 }
-                .accessibilityHint("Where the microphone and speaker are")
+                .accessibilityHint("Where the microphone and speaker are. Glasses HFP stops the glasses camera.")
+                .onChange(of: audioRoute) { _, _ in Task { await coordinator.restart(source: state.source) } }
                 Picker("Volume button", selection: $volumePrimary) {
                     Text("Who's here?").tag("whoIsHere"); Text("Remember them").tag("rememberThem")
                 }
@@ -38,10 +41,6 @@ struct SettingsView: View {
                     .accessibilityHint("Uses the Apple voice for the logged speaker")
             }
             Section("Recognition") {
-                Picker("Embeddings", selection: $embeddingProvider) {
-                    Text("On device").tag("ondevice"); Text("Modal fallback").tag("modal")
-                }
-                .accessibilityHint("Modal sends 112 by 112 face crops to a server and discards them")
                 VStack(alignment: .leading) {
                     Text("Match threshold \(matchThreshold, specifier: "%.2f")")
                     Slider(value: $matchThreshold, in: 0.25...0.60, step: 0.01)
@@ -49,16 +48,10 @@ struct SettingsView: View {
                         .accessibilityValue(String(format: "%.2f", matchThreshold))
                         .accessibilityHint("Higher means fewer false names")
                 }
-                Stepper("Minimum face size \(minFacePx) px", value: $minFacePx, in: 24...120, step: 4)
-                    .accessibilityHint("Faces smaller than this are ignored")
-            }
-            Section("Cues") {
-                Toggle("Speaking first", isOn: $cueSpeaking).accessibilityHint("Says a known person's name when they start talking")
-                Toggle("Wave", isOn: $cueWave).accessibilityHint("Stretch feature")
-                Toggle("Smile", isOn: $cueSmile).accessibilityHint("Stretch feature")
             }
             Section("Keys") {
                 row("ElevenLabs key", Secrets.elevenLabsAPIKey != nil)
+                row("ElevenLabs agent", Secrets.elevenLabsAgentID != nil)
                 row("Meta Model API key", Secrets.metaModelAPIKey != nil)
                 row("Modal endpoint", Secrets.modalEmbedURL != nil)
                 LabeledContent("Name extractor", value: runtime.metaClient == nil ? "regex" : "regex → Apple → Meta")
@@ -76,6 +69,21 @@ struct SettingsView: View {
         .confirmationDialog("Remove everyone?", isPresented: $confirmReset, titleVisibility: .visible) {
             Button("Remove everyone", role: .destructive) { runtime.resetPeople() }
             Button("Keep", role: .cancel) {}
+        }
+    }
+
+    private func calibrate() {
+        guard let vad = coordinator.services?.vad else { return }
+        calibrating = true
+        Task {
+            await vad.calibrateUser(seconds: 3)
+            if vad.isCalibrated {
+                UserDefaults.standard.set(vad.userRMS, forKey: UserSettings.userVoiceRMS)
+                calibration = "Calibrated to your voice."
+            } else {
+                calibration = "I didn't hear you. Try again."
+            }
+            calibrating = false
         }
     }
 

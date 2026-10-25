@@ -47,6 +47,9 @@ enum CommandParser {
         if match("\\b(who'?s|who is|whos) (here|around|there|near ?by|with me|in front of me)\\b", in: s) != nil
             || match("\\b(anyone|anybody|who do you see|who can you see|who's that|who is that)\\b", in: s) != nil { return .whoIsHere }
 
+        if match("\\b(what'?s|what is|whats) (around|near|in front of|ahead of) (me|us)\\b", in: s) != nil
+            || match("\\b(describe|look around|where am i|what do you see|what can you see)\\b", in: s) != nil { return .describeSurroundings }
+
         if match("\\b(say that again|say again|repeat that|repeat|come again|what did you say|one more time|again)\\b", in: s) != nil { return .repeatLast }
 
         if match("\\b(cancel|never mind|nevermind|forget it|stop)\\b", in: s) != nil { return .cancel }

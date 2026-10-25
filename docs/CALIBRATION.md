@@ -17,5 +17,10 @@ Phone camera: computed from `activeFormat.videoFieldOfView` (portrait hFOV ≈ 2
 | Phone camera | | | | | n/a |
 | Glasses (Classic) | | | | | |
 
-## Loudness split (Settings → Audio → Calibrate my voice)
-The wearer reads one sentence; speech above 0.6 × that RMS is tagged `user`, the rest `other`. Re-run if the room gets louder; the consent question only uses names from `other`-attributed speech.
+## Loudness split (Settings → You → Calibrate my voice)
+The wearer talks normally for 3 s; speech above 0.6 × that RMS is tagged `user`, the rest `other` (the value is saved). Re-run if the room gets louder. It matters: the conversation trigger needs both `user` and `other` speech, the assistant answers `user` speech, and the suggested-remember flow only accepts the other person's `other`-attributed yes.
+
+## Hazards (`HazardPolicy` in Familiar/Perception/SceneAwareness.swift)
+Defaults were chosen without glasses footage; tune them on the iPhone with the Judge view event log (`scene hazard(...)` lines):
+- Stairs / escalator / crosswalk: Vision label confidence ≥ 0.5 in 2 of the last 3 classifications (≈1 per second). Face a staircase from 2 m: one "Stairs ahead." within ~2 s, none for 8 s after. Lower `hazardConfidence` if it is missed, raise it if a flat hallway triggers it.
+- Obstacle: optical-flow expansion in the centre of the view, time-to-contact < 1.2 s on 2 consecutive pairs (≈4 per second). Walk at normal pace toward a wall or a door: "Obstacle ahead." at about 1.5 m. Walk down an open hallway: nothing. Standing still while turning the head: nothing. Adjust `obstacleTimeToContact`.

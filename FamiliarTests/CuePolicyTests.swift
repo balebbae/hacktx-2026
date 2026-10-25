@@ -97,7 +97,7 @@ final class CuePolicyTests: XCTestCase {
         let set = Phrasebook.prewarmSet(names: ["Marcus", "Priya"])
         XCTAssertTrue(set.contains("Marcus, ahead, close."))
         XCTAssertTrue(set.contains("Priya left."))
-        XCTAssertTrue(set.contains(Phrasebook.wantToRemember))
+        XCTAssertTrue(set.contains(Phrasebook.shouldIAdd))
         XCTAssertEqual(Set(set).count, set.count, "no duplicates")
         XCTAssertFalse(set.contains { $0.localizedCaseInsensitiveContains("familiar") })
         XCTAssertEqual(VoiceFactory.makeCuePolicy().cooldowns.appeared, 30)

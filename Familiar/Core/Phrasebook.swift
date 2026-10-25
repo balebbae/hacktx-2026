@@ -37,7 +37,9 @@ enum Phrasebook {
     static let nobody = "I don't see anyone."
 
     // MARK: Consent
-    static let wantToRemember = "Want to remember them?"
+    static let shouldIAdd = "Should I add this person to your contacts?"
+    static func wearerAsksCard(userName: String) -> String { "Do you want to be added to \(userName)'s contacts?" }
+    static let scanningFace = "I'm going to scan your face."
     static let lookTowardMe = "Could you look toward me for a second?"
     static func consentQuestion(userName: String, name: String?) -> String {
         if let name, !name.isEmpty {
@@ -59,6 +61,18 @@ enum Phrasebook {
     static let lookAtCamera = "Look at the camera…"
     static func scanProgress(_ have: Int, of total: Int) -> String { "\(lookAtCamera) \(have)/\(total)" }
     static let noFaceYet = "No face yet. Hold the phone at arm's length."
+
+    // MARK: Surroundings (on-device scene and hazards; never people)
+    static func hazard(_ k: HazardKind) -> String {
+        switch k {
+        case .stairs: return "Stairs ahead."
+        case .escalator: return "Escalator ahead."
+        case .crosswalk: return "Crosswalk ahead."
+        case .obstacle: return "Obstacle ahead."
+        }
+    }
+    static func place(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + "." }
+    static let nothingToName = "Nothing I can name."
 
     // MARK: Commands
     static func mode(_ m: ChatterMode) -> String {

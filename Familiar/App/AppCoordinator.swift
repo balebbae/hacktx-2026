@@ -54,7 +54,15 @@ final class AppCoordinator: ObservableObject {
             do { try await s.frameSource.start() } catch { report("camera start failed", error) }
         }
         do { try await s.perception.start(frames: s.frameSource, gallery: s.peopleStore) } catch { report("perception start failed", error) }
-        do { try await s.transcriber.start(audio: s.audioInput) } catch { report("speech start failed", error) }
+        do { try await s.transcriber.start(audio: s.transcriberAudio) } catch { report("speech start failed", error) }
+        // Routine cues (priority ≥ 1) wait while the wearer is talking; the gate had this flag but nothing set it.
+        if let vad = s.vad {
+            tasks.append(Task { for await v in vad.subscribe() { s.cueGate.userSpeaking = v.isSpeech && v.guess == .user } })
+        }
+        s.scene.start(frames: s.frameSource)
+        tasks.append(Task { [weak self] in
+            for await e in s.scene.subscribe() { self?.handle(scene: e, services: s, state: state) }
+        })
         tasks.append(Task { [weak self] in
             for await frame in s.frameSource.subscribe() { await self?.noteFrame(at: frame.timestamp) }
         })
@@ -142,6 +150,7 @@ final class AppCoordinator: ObservableObject {
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
         services?.perception.stop()
+        services?.scene.stop()
         services?.frameSource.stop()
         services?.transcriber.stop()
         services?.speaker.stopAll()
@@ -160,6 +169,21 @@ final class AppCoordinator: ObservableObject {
         for u in s.cuePolicy.utterances(for: event, mode: state.mode, now: now) where s.cueGate.admit(u) {
             Task { await s.speaker.speak(u) }
         }
+    }
+
+    /// Hazards are spoken at once (priority 0, even when muted); a new place only in chatty mode.
+    private func handle(scene e: SceneEvent, services s: Services, state: AppState) {
+        log("scene \(e)")
+        let u: Utterance
+        switch e {
+        case let .hazard(kind):
+            u = Utterance(text: Phrasebook.hazard(kind), priority: 0, category: "hazard", personID: nil, dedupeKey: "hazard:\(kind.rawValue)", audience: .user, earcon: true)
+        case let .placeChanged(place):
+            guard state.mode == .chatty else { return }
+            u = Utterance(text: Phrasebook.place(place), priority: 3, category: "place", personID: nil, dedupeKey: "place", audience: .user, earcon: false)
+        }
+        guard s.cueGate.admit(u) else { return }
+        Task { await s.speaker.speak(u) }
     }
 
     private func noteFrame(at t: TimeInterval) {
@@ -187,7 +211,7 @@ final class AppCoordinator: ObservableObject {
 
     func whoIsHere() {
         guard let s = services else { return }
-        let text = RollCallSkeleton.phrase(tracks: s.perception.currentTracks())
+        let text = RollCall.phrase(tracks: s.perception.currentTracks())
         let u = Utterance(text: text, priority: 1, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: true)
         log("command whoIsHere")
         Task { await s.speaker.speak(u) }
@@ -214,17 +238,5 @@ final class AppCoordinator: ObservableObject {
     func handle(url: URL) {
         log("open url \(url.absoluteString)")
         if let route = AppRoute(url: url) { pendingRoute = route }
-    }
-}
-
-/// Minimal roll call for the skeleton; S3 ships the real `RollCall` in Flows/RollCall.swift.
-enum RollCallSkeleton {
-    static func phrase(tracks: [TrackSnapshot]) -> String {
-        let known = tracks.filter { $0.identity.isKnown }.sorted { $0.bearing.degrees < $1.bearing.degrees }
-        let others = tracks.count - known.count
-        if tracks.isEmpty { return Phrasebook.nobody }
-        if known.isEmpty { return Phrasebook.rollCallNoKnown(count: others) }
-        let parts = known.map { Phrasebook.rollCallKnown(name: $0.identity.name ?? "", band: $0.bearing.band, distance: $0.distance) }
-        return (parts + [Phrasebook.rollCallOthers(count: others)]).joined(separator: " ")
     }
 }

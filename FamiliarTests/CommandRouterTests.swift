@@ -85,6 +85,27 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(flow.begins, [true, true])
     }
 
+    func testDescribeSurroundingsSpeaksHazardsPeopleThenPlace() async {
+        router.surroundings = { people in ["Stairs ahead.", people, "Kitchen."].compactMap { $0 }.joined(separator: " ") }
+        await router.handle(.describeSurroundings)
+        XCTAssertEqual(speaker.texts.last, "Stairs ahead. Kitchen.", "no people line when nobody is in view")
+        perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .ahead, distance: .close)]
+        await router.handle(.describeSurroundings)
+        XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, ahead, close. No one else. Kitchen.")
+    }
+
+    func testConversationWindowNeedsBothSides() {
+        var w = ConversationWindow(); w.words = 10
+        func seg(_ t: TimeInterval, _ s: SpeakerGuess, _ words: Int) -> TranscriptSegment {
+            TranscriptSegment(text: Array(repeating: "word", count: words).joined(separator: " "), start: t - 1, end: t, isFinal: true, speaker: s)
+        }
+        XCTAssertFalse(w.add(seg(1, .user, 8)))
+        XCTAssertFalse(w.add(seg(2, .user, 8)), "a monologue is not a conversation")
+        XCTAssertTrue(w.add(seg(3, .other, 2)))
+        XCTAssertFalse(w.add(seg(4, .other, 20)), "starts over after firing")
+        XCTAssertFalse(w.add(seg(100, .user, 3)), "old words fall out of the window")
+    }
+
     func testManualCommandSourceIsRouted() async {
         let src = ManualCommandSource()
         router.attach(sources: [src])

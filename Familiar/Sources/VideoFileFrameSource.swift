@@ -50,7 +50,7 @@ final class VideoFileFrameSource: FrameSource, @unchecked Sendable {
         task = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             repeat {
-                do { try await self.playOnce(asset: asset, track: track, orientation: orientation) } catch { break }
+                do { try await self.playOnce(asset: asset, track: track, orientation: orientation) } catch { NSLog("[VideoFileFrameSource] %@: %@", self.url.lastPathComponent, "\(error)"); break }
             } while self.loops && !Task.isCancelled
         }
     }

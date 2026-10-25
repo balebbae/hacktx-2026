@@ -88,7 +88,7 @@ struct DemoControlsView: View {
         prewarmStatus = "Prewarming…"
         let name = state.userName
         Task {
-            let phrases = [Phrasebook.wantToRemember, Phrasebook.lookTowardMe, Phrasebook.consentQuestion(userName: name, name: runtime.nameGuess?.name), Phrasebook.consentQuestion(userName: name, name: nil), Phrasebook.wasThatAYes, Phrasebook.whatShouldICallYou, Phrasebook.nothingSaved, Phrasebook.theyLeft]
+            let phrases = [Phrasebook.shouldIAdd, Phrasebook.scanningFace, Phrasebook.lookTowardMe, Phrasebook.consentQuestion(userName: name, name: runtime.nameGuess?.name), Phrasebook.consentQuestion(userName: name, name: nil), Phrasebook.wasThatAYes, Phrasebook.whatShouldICallYou, Phrasebook.nothingSaved, Phrasebook.theyLeft]
             await coordinator.services?.speaker.prewarm(phrases)
             prewarmStatus = "Prewarmed \(phrases.count) phrases"
         }

@@ -30,7 +30,9 @@ Phone camera · Glasses · Fixture: <clip>. Glasses: Meta AI app → Settings �
 ## Known issues
 - `approach_marcus.mp4` is only 2.9 s; `no_reply.mp4` and `distance_calibration.mp4` were never recorded (tests skip).
 - Modal proxy-auth tokens must be created by a human in the Modal dashboard; the on-device embedder is the primary path.
-- Filled in by S5 with whatever the integration pass finds.
+- The iPhone 17 Simulator on Xcode 26.6 cannot create Vision inference contexts ("Could not create inference context"): face detection and scene awareness return nothing there, and the 7 Vision fixture tests skip with that reason. Run them on a device.
+- Hazard thresholds (stairs label votes, obstacle time-to-contact) are uncalibrated defaults; see docs/CALIBRATION.md → Hazards.
+- The ElevenLabs agent must allow the **Text only** override (docs/AGENT_SETUP.md step 6), or the session fails to start and the Judge view shows `connect failed`.
 
 ## What is wired on main (S5 pass)
 - `Services.make` builds the real modules: `PerceptionFactory` (on-device `w600k_mbf.onnx`, Modal fallback when `MODAL_*` keys are present), `AudioFactory.makeEngine` (started once; the glasses streaming flag drives `glassesStreamActive`), `VoiceFactory.makeSpeaker` (ElevenLabs over the engine, Apple fallback; Settings → Voice can force Apple or the log speaker), `VoiceFactory.makeCuePolicy`, `SpeechFactory.makeTranscriber` on device (SpeechAnalyzer → SFSpeech) and `FakeTranscriber(conversation.txt)` in the Simulator, wake-word `CommandSource`.

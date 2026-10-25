@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import Vision
 @testable import Familiar
 
 /// End-to-end: real Vision + ORT pipeline over the bundled clips, played in real time by `VideoFileFrameSource`.
@@ -20,8 +21,19 @@ final class PerceptionFixtureTests: XCTestCase {
     static var sameScores: [Float] = []
     static var diffScores: [Float] = []
 
+    /// Some Simulator runtimes cannot run Vision's networks at all ("Could not create inference context").
+    static let visionAvailable: Bool = {
+        var pb: CVPixelBuffer?
+        CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pb)
+        guard let pb else { return false }
+        let r = VNDetectFaceRectanglesRequest(); r.revision = VNDetectFaceRectanglesRequestRevision3
+        return (try? VNImageRequestHandler(cvPixelBuffer: pb, options: [:]).perform([r])) != nil
+    }()
+    static let visionSkipReason = "Vision inference unavailable in this Simulator runtime; run on an iPhone"
+
     override func setUp() async throws {
         try XCTSkipIf(Self.embedder == nil, "w600k_mbf.onnx not bundled")
+        try XCTSkipUnless(Self.visionAvailable, Self.visionSkipReason)
         if Self.gallery == nil { Self.gallery = try await enroll() }
     }
 

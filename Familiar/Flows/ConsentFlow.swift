@@ -83,22 +83,11 @@ final class SpokenConsentFlow: ConsentFlow {
     private func run(confirmFirst: Bool) async {
         startListeningToTranscripts()
         defer { stopListeningToTranscripts(); cueGate.consentActive = false }
+        if confirmFirst { await runSuggested() } else { await runAsked() }
+    }
 
-        if confirmFirst {
-            acceptedSpeakers = [.user, .none]
-            pendingTap = nil
-            state = .confirmingWithUser
-            notBefore = clock()
-            await speaker.speak(Utterance(text: Phrasebook.wantToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: true))
-            guard !Task.isCancelled else { return }
-            let answer = await firstAnswer(timeout: config.confirmTimeout)
-            switch answer {
-            case .tap(true), .spoken(.yes, _, _): break
-            default: finish(.idle); return
-            }
-        }
-
-        // gathering
+    /// "Remember them" (button, wake word, agent): the app asks the other person out loud.
+    private func runAsked() async {
         acceptedSpeakers = [.other, .none]
         guard let target = pickTarget() else {
             await speaker.speak(Utterance(text: Phrasebook.noOneToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: false))
@@ -111,20 +100,10 @@ final class SpokenConsentFlow: ConsentFlow {
             let u = userName()
             await speaker.prewarm([Phrasebook.consentQuestion(userName: u, name: guessed), Phrasebook.consentQuestion(userName: u, name: nil), Phrasebook.wasThatAYes, Phrasebook.whatShouldICallYou, Phrasebook.nothingSaved, Phrasebook.theyLeft] + (guessed.map { [Phrasebook.saved(name: $0)] } ?? []))
         }
-        var embeddings = await gather(track: target.trackID, timeout: config.gatherTimeout)
-        if Task.isCancelled { return }
-        if embeddings == nil { finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return }
-        if embeddings!.count < config.minEmbeddings {
-            await speaker.speak(Utterance(text: Phrasebook.lookTowardMe, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
-            embeddings = await gather(track: target.trackID, timeout: config.extraGatherTimeout)
-            if Task.isCancelled { return }
-            if embeddings == nil { finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return }
-            if embeddings!.count < config.minEmbeddings { finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return }
-        }
-        let gathered = embeddings!
+        guard let gathered = await gatherOrGiveUp(track: target.trackID) else { return }
 
         // asking
-        var name = await resolveNameGuess()
+        let name = await resolveNameGuess()
         if Task.isCancelled { return }
         cueGate.consentActive = true
         pendingTap = nil
@@ -135,42 +114,113 @@ final class SpokenConsentFlow: ConsentFlow {
         notBefore = clipStart
         await speaker.speak(Utterance(text: question, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: true))
         if Task.isCancelled { return }
+        // Only what is said after the question counts: anything heard while it played is the question itself.
+        notBefore = clock()
 
         // listening
         state = .listening
-        var answer: Answer?
-        switch await awaitAnswer(timeout: config.listenTimeout, track: target.trackID) {
-        case let .answer(a): answer = a
-        case .timeout: answer = nil
-        case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return
+        guard let (kind, reply, replyEnd) = await listenForConsent(timeout: config.listenTimeout, track: target.trackID) else { return }
+        state = .saving
+        await save(track: target.trackID, gathered: gathered, name: name, kind: kind, question: question, reply: reply, clip: (clipStart, replyEnd))
+    }
+
+    /// Familiar noticed a conversation with someone it does not know: it asks the wearer, the wearer asks the other
+    /// person themselves, and only the other person's yes (or tap) saves anything.
+    private func runSuggested() async {
+        acceptedSpeakers = [.user, .none]
+        pendingTap = nil
+        state = .confirmingWithUser
+        await speaker.speak(Utterance(text: Phrasebook.shouldIAdd, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: true))
+        guard !Task.isCancelled else { return }
+        notBefore = clock()
+        switch await firstAnswer(timeout: config.confirmTimeout) {
+        case .tap(true), .spoken(.yes, _, _): break
+        default: finish(.idle); return
         }
+        guard pickTarget() != nil else {
+            await speaker.speak(Utterance(text: Phrasebook.noOneToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: false))
+            finish(.cancelled(reason: Phrasebook.noOneToRemember)); return
+        }
+
+        // The wearer asks in their own words; the app stays quiet and listens for the other person.
+        acceptedSpeakers = [.other, .none]
+        ignoreQuestions = true
+        holdUnclear = true
+        cueGate.consentActive = true
+        pendingTap = nil
+        let question = Phrasebook.wearerAsksCard(userName: userName())
+        lastQuestion = question
+        let listenStart = clock()
+        notBefore = listenStart
+        state = .listening
+        guard let (kind, reply, replyEnd) = await listenForConsent(timeout: config.wearerAskTimeout, track: nil) else { return }
+        let asked = transcriber.recentSegments(seconds: clock() - listenStart + 1).last { $0.speaker == .user && $0.start >= listenStart - 0.5 }?.text ?? question
+
+        state = .saving
+        var name = await resolveNameGuess()
         if Task.isCancelled { return }
+        if name == nil { name = await askForName() ?? config.fallbackName }
+        if Task.isCancelled { return }
+        await speaker.speak(Utterance(text: Phrasebook.scanningFace, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
+        guard !Task.isCancelled, let target = pickTarget() else { finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return }
+        state = .gathering(track: target.trackID)
+        perception.requestBurst(track: target.trackID, seconds: 2)
+        guard let gathered = await gatherOrGiveUp(track: target.trackID) else { return }
+        state = .saving
+        await save(track: target.trackID, gathered: gathered, name: name, kind: kind, question: "Asked by \(userName()): \(asked)", reply: reply, clip: (listenStart, replyEnd))
+    }
+
+    /// Embeddings for the save, with one "look toward me" retry. nil = gave up (state and speech already handled).
+    private func gatherOrGiveUp(track: Int) async -> [FaceEmbedding]? {
+        var embeddings = await gather(track: track, timeout: config.gatherTimeout)
+        if Task.isCancelled { return nil }
+        if let e = embeddings, e.count < config.minEmbeddings {
+            await speaker.speak(Utterance(text: Phrasebook.lookTowardMe, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
+            embeddings = await gather(track: track, timeout: config.extraGatherTimeout)
+            if Task.isCancelled { return nil }
+        }
+        guard let e = embeddings, e.count >= config.minEmbeddings else { finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return nil }
+        return e
+    }
+
+    /// The other person's answer, with one "was that a yes?" for an unclear reply. nil = no consent (state and speech
+    /// already handled). `track` nil: any unknown person in view keeps the question open.
+    private func listenForConsent(timeout: TimeInterval, track: Int?) async -> (ConsentRecord.Kind, String, TimeInterval)? {
+        heardUnclear = false
+        defer { holdUnclear = false; ignoreQuestions = false }
+        var answer: Answer?
+        switch await awaitAnswer(timeout: timeout, track: track) {
+        case let .answer(a): answer = a
+        case .timeout: answer = heardUnclear ? .spoken(.unclear, transcript: "", end: clock()) : nil
+        case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return nil
+        }
+        if Task.isCancelled { return nil }
         if case .spoken(.unclear, _, _) = answer {
+            holdUnclear = false
+            ignoreQuestions = false
             notBefore = clock()
             await speaker.speak(Utterance(text: Phrasebook.wasThatAYes, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
-            switch await awaitAnswer(timeout: config.reaskTimeout, track: target.trackID) {
+            notBefore = clock()
+            switch await awaitAnswer(timeout: config.reaskTimeout, track: track) {
             case let .answer(a): answer = a
             case .timeout: answer = nil
-            case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return
+            case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return nil
             }
-            if Task.isCancelled { return }
+            if Task.isCancelled { return nil }
         }
-        let kind: ConsentRecord.Kind
-        var replyTranscript = ""
-        var replyEnd = clock()
         switch answer {
-        case let .spoken(.yes, transcript, end): kind = .spoken; replyTranscript = transcript; replyEnd = end
-        case .tap(true): kind = .tap; replyTranscript = "(tapped YES)"
+        case let .spoken(.yes, transcript, end): lastReply = transcript; return (.spoken, transcript, end)
+        case .tap(true): lastReply = "(tapped YES)"; return (.tap, "(tapped YES)", clock())
         default:
             lastReply = answerText(answer)
             finish(.declined)
             await speaker.speak(Utterance(text: Phrasebook.nothingSaved, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
-            return
+            return nil
         }
-        lastReply = replyTranscript
+    }
 
-        // saving
-        state = .saving
+    private func save(track: Int, gathered: [FaceEmbedding], name: String?, kind: ConsentRecord.Kind, question: String, reply: String, clip: (start: TimeInterval, end: TimeInterval)) async {
+        var name = name
         if name == nil {
             name = await askForName()
             if Task.isCancelled { return }
@@ -183,10 +233,10 @@ final class SpokenConsentFlow: ConsentFlow {
             else { try? paths.ensureDirectories(); try? jpeg.write(to: paths.thumbnailURL(for: id), options: .atomic); thumbnailPath = paths.relativeThumbnailPath(for: id) }
         }
         var clipURL: URL? = paths.consentClipURL(for: id)
-        if (try? clipRecorder.writeClip(from: clipStart - config.clipLead, to: replyEnd + config.clipTail, url: clipURL!)) != true { clipURL = nil }
-        let record = ConsentRecord(kind: kind, at: Date(), askedText: question, replyTranscript: replyTranscript, clipURL: clipURL)
+        if (try? clipRecorder.writeClip(from: clip.start - config.clipLead, to: clip.end + config.clipTail, url: clipURL!)) != true { clipURL = nil }
+        let record = ConsentRecord(kind: kind, at: Date(), askedText: question, replyTranscript: reply, clipURL: clipURL)
         var person = Person(id: id, name: finalName, phone: nil, embeddings: gathered, thumbnailPath: thumbnailPath, consent: record, met: meeting.current(), contactIdentifier: nil)
-        perception.assignIdentity(track: target.trackID, personID: id, name: finalName)
+        perception.assignIdentity(track: track, personID: id, name: finalName)
         do { try peopleStore.add(person) } catch { finish(.cancelled(reason: "save failed: \(error.localizedDescription)")); return }
         if let identifier = try? await contacts.create(for: person) {
             person.contactIdentifier = identifier
@@ -290,9 +340,29 @@ final class SpokenConsentFlow: ConsentFlow {
         guard seg.isFinal, acceptedSpeakers.contains(seg.speaker), seg.end >= notBefore - 0.3 else { return }
         let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // While the wearer asks in their own words, their question is not an answer (speaker attribution is a guess).
+        if ignoreQuestions, Self.looksLikeQuestion(text) { return }
         pendingReplies.append(text)
         let verdict = await yesNo.classify(text)
+        if verdict == .unclear, holdUnclear { heardUnclear = true; return }
         answerBus.publish(.spoken(verdict, transcript: text, end: seg.end))
+    }
+
+    private var ignoreQuestions = false
+    private var holdUnclear = false
+    private var heardUnclear = false
+
+    /// "Do you want to be added to my contacts?", "Hey, is it okay if…": a question, not a reply.
+    static func looksLikeQuestion(_ text: String) -> Bool {
+        let s = CommandParser.normalize(text)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") { return true }
+        let starters = ["do you", "would you", "can i", "could i", "may i", "is it", "is that", "mind if", "are you", "how about", "would it"]
+        let words = s.split(separator: " ")
+        for i in 0..<min(3, words.count) {
+            let rest = words[i...].joined(separator: " ")
+            if starters.contains(where: { rest.hasPrefix($0 + " ") || rest == $0 }) { return true }
+        }
+        return false
     }
 
     private var pendingReplies: [String] = []
@@ -310,8 +380,8 @@ final class SpokenConsentFlow: ConsentFlow {
 
     private enum Awaited { case answer(Answer), lost, timeout }
 
-    /// First answer, unless the target track disappears for ~0.8 s first.
-    private func awaitAnswer(timeout: TimeInterval, track: Int) async -> Awaited {
+    /// First answer, unless the target track (or, with `track` nil, every unknown person) disappears for ~0.8 s first.
+    private func awaitAnswer(timeout: TimeInterval, track: Int?) async -> Awaited {
         if let tap = takePendingTap() { return .answer(tap) }
         let stream = answerBus.subscribe()
         defer { pendingTap = nil }
@@ -324,7 +394,8 @@ final class SpokenConsentFlow: ConsentFlow {
             group.addTask {
                 var misses = 0
                 while !Task.isCancelled {
-                    misses = perception.currentTracks().contains { $0.trackID == track } ? 0 : misses + 1
+                    let present = perception.currentTracks().contains { t in track.map { t.trackID == $0 } ?? !t.identity.isKnown }
+                    misses = present ? 0 : misses + 1
                     if misses >= missesNeeded { return .lost }
                     try? await Task.sleep(nanoseconds: UInt64(poll * 1_000_000_000))
                 }
