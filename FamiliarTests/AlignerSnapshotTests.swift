@@ -29,12 +29,17 @@ final class AlignerSnapshotTests: XCTestCase {
             XCTAssertEqual(le.x, tl.x, accuracy: 4); XCTAssertEqual(le.y, tl.y, accuracy: 4)
             XCTAssertEqual(re.x, tr.x, accuracy: 4); XCTAssertEqual(re.y, tr.y, accuracy: 4)
             XCTAssertEqual(CVPixelBufferGetWidth(out.buffer), 112); XCTAssertEqual(CVPixelBufferGetHeight(out.buffer), 112)
+            // Crops land in the xcresult as attachments; set TEST_RUNNER_ALIGNER_DUMP_DIR=/some/dir to also write them to disk.
+            let dump = ProcessInfo.processInfo.environment["ALIGNER_DUMP_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            if let dump { try? FileManager.default.createDirectory(at: dump, withIntermediateDirectories: true) }
             if let cg = aligner.cgImage(out.buffer) {
                 let a = XCTAttachment(image: UIImage(cgImage: cg)); a.name = "aligned_\(i).png"; a.lifetime = .keepAlways; add(a)
+                if let dump { try? UIImage(cgImage: cg).pngData()?.write(to: dump.appendingPathComponent("aligned_\(i).png")) }
             }
             if let thumb = aligner.thumbnail(f.pixelBuffer, orientation: f.orientation, box: face.box), let img = UIImage(data: thumb) {
                 XCTAssertEqual(img.size.width, 256, accuracy: 1); XCTAssertEqual(img.size.height, 256, accuracy: 1)
                 if i == 0 { let a = XCTAttachment(image: img); a.name = "thumbnail_0.jpg"; a.lifetime = .keepAlways; add(a) }
+                if let dump { try? thumb.write(to: dump.appendingPathComponent("thumbnail_\(i).jpg")) }
             }
             aligned += 1
         }
