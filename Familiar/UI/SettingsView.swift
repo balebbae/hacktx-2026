@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(UserSettings.audioRoute) private var audioRoute = "auto"
     @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
+    @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
     @State private var confirmReset = false
     @State private var calibrating = false
     @State private var calibration: String?
@@ -40,6 +41,13 @@ struct SettingsView: View {
                 Toggle("Speak cues aloud (Simulator)", isOn: $state.speakLogSpeakerAloud)
                     .accessibilityHint("Uses the Apple voice for the logged speaker")
             }
+            Section("Assistant") {
+                Picker("Poyo runs on", selection: $assistantBrain) {
+                    Text("Vision model (sees the view)").tag("vision"); Text("ElevenLabs agent (text only)").tag("elevenlabs")
+                }
+                .accessibilityHint("The vision model gets camera frames with every face blacked out. The ElevenLabs agent gets text only.")
+                .onChange(of: assistantBrain) { _, _ in Task { await coordinator.restart(source: state.source) } }
+            }
             Section("Recognition") {
                 VStack(alignment: .leading) {
                     Text("Match threshold \(matchThreshold, specifier: "%.2f")")
@@ -53,6 +61,7 @@ struct SettingsView: View {
                 row("ElevenLabs key", Secrets.elevenLabsAPIKey != nil)
                 row("ElevenLabs agent", Secrets.elevenLabsAgentID != nil)
                 row("Meta Model API key", Secrets.metaModelAPIKey != nil)
+                row("Vision model", coordinator.services?.cloudScene.isConfigured ?? false)
                 row("Modal endpoint", Secrets.modalEmbedURL != nil)
                 LabeledContent("Name extractor", value: runtime.metaClient == nil ? "regex" : "regex → Apple → Meta")
             }
