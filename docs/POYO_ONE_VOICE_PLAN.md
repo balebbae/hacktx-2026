@@ -151,6 +151,26 @@ Principles:
 
 Do A1–A7 first (≈ 3 h with device checks). A8–A10 if time remains; each is behind a flag or trivially revertable.
 
+**Status (Sun Oct 25, ~08:00 CDT): A1–A10 landed on `main`** (commits `9e4f6e7`, `95455b7`, `53af8a2`; 277 Simulator tests
+pass, 9 skipped). Decisions taken on the way, to verify on the iPhone:
+- A3: no "upgrade" of an alert already admitted. Priority-0 alerts play within ~200 ms (cache hit), so replacing
+  "Stairs ahead." with the model's richer line would cut it off mid-word. The richer line is dropped within 2.5 s;
+  after that it plays only when it is news (closer by 1 m, newly close, 2 m farther, or the first distance for a
+  thing announced without one when it is close). `HazardRegistry` keys path alerts as `obstacle@clock`, so the
+  looming detector's "Obstacle ahead." and the model's "Wall ahead, 2 meters." are the same thing.
+- A4: `DialogueMemory` records every spoken line with audience `.user` (consent lines to the other person are
+  not turns). The brain records its own answer and the speaker hook records it again; same text within 10 s is one
+  turn. Pronouns ("where did he go") no longer parse as `whereIs`, so they reach the model with the history.
+- A5: the gate is `QuestionFilter.isRequestLike` or an opener (and / ok / okay / also / which / what about / how
+  about / thanks), and no near, facing face with `mouthOpenness ≥ 0.06` (plus `ActiveSpeaker.otherIsSpeaking`).
+  One sentence per window; a sentence that does not qualify closes it (the wearer is talking to someone).
+- A9: streaming is **on by default** (`streamingTTS`, Settings → Voice). 300 ms jitter buffer before the first
+  buffer is scheduled; a stream that never starts goes straight to the Apple voice without a second ElevenLabs
+  try. `AudioEngineController.playStream` is untested in the Simulator (no audio device): if speech stutters on
+  the phone, flip the toggle; the plain path is unchanged.
+- A10: the chime stays on hazards, "heard you", the close-crossing collision cue, the consent question to the
+  other person and "Someone is introducing themselves."; "Saved." lost it.
+
 Acceptance before submission (Judge view + `poyo-log.txt`):
 - No "TTS fell back to the Apple voice" lines in a 5-minute session.
 - One hazard utterance per stairs/wall episode, never two phrasings.
