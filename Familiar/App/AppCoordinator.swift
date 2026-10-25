@@ -96,7 +96,10 @@ final class AppCoordinator: ObservableObject {
                 tasks.append(Task.detached { for await _ in volatile { lastVolatileAt.withLock { $0 = CACurrentMediaTime() } } })
                 voice.speechInProgress = { CACurrentMediaTime() - lastVolatileAt.withLock { $0 } < 0.7 }
             }
+            // Chain onto whatever is already listening: the tab view mirrors spoken lines into Room captions and toasts.
+            let mirrored = voice.onSpoken
             voice.onSpoken = { spoken in
+                mirrored?(spoken)
                 DiagnosticLog.write("said[p\(spoken.utterance.priority) \(spoken.utterance.category)\(spoken.source == "apple" ? " apple" : "")] \(spoken.utterance.text)")
                 if spoken.utterance.audience == .user { s.dialogue.record(.poyo, spoken.utterance.text, at: spoken.window?.lowerBound ?? CACurrentMediaTime()) }
             }

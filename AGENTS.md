@@ -48,7 +48,7 @@ modal/embed_server.py      S9 · docs/HANDOFF.md · docs/CALIBRATION.md · docs/
 - Secrets: `Secrets.xcconfig` (copy from `Secrets.example.xcconfig`) → Info.plist keys → `Secrets.swift`. Never hardcode or commit keys. In Devin, keys are env vars from the secrets store; write them into the local `Secrets.xcconfig` only.
 - The Simulator has no camera, no SpeechAnalyzer, no Foundation Models and no glasses. Every feature must be exercisable with `VideoFileFrameSource` (fixtures), `ScriptedPerception`, `FakeTranscriber`, `LogSpeaker`, and a `FakeEmbedder`. Assume Apple on-device speech and LLM APIs return "unavailable" in the Simulator and prove the fallback paths instead.
 - Fixtures live in `Familiar/Resources/Fixtures/` with `fixtures.json` (expected names, events, counts, extracted name, yes/no) and `*.txt` transcripts (`other: …` / `user: …` lines) for `FakeTranscriber`. If a fixture is missing, skip that test with a clear message; never fail the build on missing media.
-- Dependencies, pinned: ONNX Runtime SPM 1.24.2 (added by S1); Meta Wearables DAT 1.0.1 (S6); ElevenLabs Swift SDK 3.4.0 (S8). Nothing else.
+- Dependencies, pinned: ONNX Runtime SPM 1.24.2 (added by S1); Meta Wearables DAT 1.0.1 (S6); ElevenLabs Swift SDK 3.4.0 (S8); libraries.dev SwiftUI kits `BotAvatarsKit`, `ThinkingOrbsKit`, `VoiceGlowKit` from https://github.com/Jakubantalik/Libraries.dev (branch `main`, UI only, MIT; the `sahas` design branch). Nothing else.
 - VoiceOver: every control has a label and hint; no colour-only state; Dynamic Type; test with the Accessibility Inspector.
 - Make decisions yourself; do not stop to ask. Record assumptions in the PR.
 

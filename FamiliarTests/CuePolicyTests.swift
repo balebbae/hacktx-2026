@@ -93,6 +93,21 @@ final class CuePolicyTests: XCTestCase {
         }
     }
 
+    func testSpeakingCueFollowsTheToggle() {
+        var enabled = false
+        let policy = FamiliarCuePolicy(speakingCueEnabled: { enabled })
+        let t = TestTracks.known("Marcus", id: marcus, track: 9)
+        XCTAssertEqual(policy.utterances(for: .speakingStarted(t), mode: .normal, now: 1), [], "toggle off: silent")
+        XCTAssertEqual(policy.utterances(for: .knownArrived(t), mode: .normal, now: 2).count, 1, "other cues unaffected")
+        enabled = true
+        XCTAssertEqual(policy.utterances(for: .speakingStarted(t), mode: .normal, now: 3).map(\.text), ["Marcus."], "toggle on: the track was never spoken")
+        let defaults = UserDefaults(suiteName: "CuePolicyTests.speaking")!
+        defaults.removePersistentDomain(forName: "CuePolicyTests.speaking")
+        XCTAssertTrue(SpeechPreferences.speakingCueEnabled(defaults), "missing key keeps the cue on")
+        defaults.set(false, forKey: SpeechPreferences.speakingCueKey)
+        XCTAssertFalse(SpeechPreferences.speakingCueEnabled(defaults))
+    }
+
     func testPrewarmSetIsCleanVocabulary() {
         let set = Phrasebook.prewarmSet(names: ["Marcus", "Priya"])
         XCTAssertTrue(set.contains("Marcus, 12 o'clock, close."))
