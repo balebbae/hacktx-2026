@@ -68,10 +68,11 @@ enum Phrasebook {
         let n = max(1, Int(m.rounded()))
         return n == 1 ? "1 meter" : "\(n) meters"
     }
-    /// Something in the walking path, from the vision reading: "Wall ahead, 2 meters." / "Chair, 1 o'clock, 2 meters."
+    /// Something in the walking path, from the vision reading: "Wall ahead, 3 meters." / "Chair, 1 o'clock, close."
+    /// Under 1.5 m it says "close": the reading is seconds old, and a precise small number would mislead.
     static func pathAlert(what: String?, bearing: Bearing, meters m: Double?) -> String {
         let thing = capitalized(what ?? "obstacle")
-        let distance = m.map { ", \(meters($0))" } ?? ""
+        let distance = m.map { $0 < 1.5 ? ", close" : ", \(meters($0))" } ?? ""
         return bearing.clock == 12 ? "\(thing) ahead\(distance)." : "\(thing), \(clock(bearing))\(distance)."
     }
     /// "Stairs down, 12 o'clock, 3 meters."

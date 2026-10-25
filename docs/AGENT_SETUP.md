@@ -1,4 +1,6 @@
-# Agent setup (ElevenLabs dashboard, about 5 minutes)
+# Agent setup (ElevenLabs dashboard, about 5 minutes) — optional
+
+The default assistant is **Poyo on the vision model** (`PoyoBrain`): it sees the redacted view itself and needs no dashboard setup, only `META_MODEL_API_KEY` (or `VISION_*`). This page is for the alternative text-only ElevenLabs agent, enabled by setting the UserDefaults key `assistantBrain` to `elevenlabs`. Name the agent **Poyo**; the wake word is "Poyo".
 
 The app keeps one ElevenLabs Conversational AI agent open for the whole session, in **text-only** mode. It reads the on-device transcript (no wake word needed), answers when the wearer asks something or clearly needs help, and replies `SKIP` (never spoken) otherwise. Its answers are spoken by the app's own voice through the glasses. Text-only is what lets it run while the glasses camera streams: a voice session opens Bluetooth HFP, and HFP ends the glasses stream. The agent cannot see anything by itself; it calls the client tools below and the phone answers from what it already knows.
 
@@ -7,7 +9,7 @@ The app sends the system prompt as an override at the start of every session, so
 ## 1. Open the agent
 
 1. Go to https://elevenlabs.io/app/conversational-ai (sign in).
-2. Open the agent **Familiar** (id `agent_9501m5rvznp2fqqb0htxc2r3s22m`). If it does not exist, click **Create agent → Blank agent** and name it `Familiar`.
+2. Open the agent (id `agent_9501m5rvznp2fqqb0htxc2r3s22m`, created as `Familiar`; rename it to `Poyo`). If it does not exist, click **Create agent → Blank agent** and name it `Poyo`.
 
 ## 2. Agent tab
 
@@ -68,7 +70,7 @@ Click **Save** after each tool, then **Save** on the agent.
 
 In the dashboard **Test agent** panel the tools will time out (nothing answers there); that is expected. On the iPhone, with the app running and the glasses streaming, say (no wake word needed):
 
-> "What's around me?" or "Familiar, how many people are around me?"
+> "What's around me?" or "Poyo, how many people are around me?"
 
 Expected: the agent calls a tool and the answer plays in the glasses while the camera keeps streaming (Judge view fps stays above 0). Small talk with someone else produces no reply. The Judge view's Agent panel shows `live` and the transcript (`user`, `tool`, `agent` lines).
 

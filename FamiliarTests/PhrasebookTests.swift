@@ -54,7 +54,7 @@ final class PhrasebookTests: XCTestCase {
 
     func testPathAndHazardPhrases() {
         XCTAssertEqual(Phrasebook.pathAlert(what: "wall", bearing: .atClock(12), meters: 1.6), "Wall ahead, 2 meters.")
-        XCTAssertEqual(Phrasebook.pathAlert(what: "chair", bearing: .atClock(1), meters: 0.7), "Chair, 1 o'clock, 1 meter.")
+        XCTAssertEqual(Phrasebook.pathAlert(what: "chair", bearing: .atClock(1), meters: 0.7), "Chair, 1 o'clock, close.")
         XCTAssertEqual(Phrasebook.pathAlert(what: nil, bearing: .atClock(12), meters: nil), "Obstacle ahead.")
         XCTAssertEqual(Phrasebook.sceneHazard("stairs down", bearing: .atClock(11), meters: 3), "Stairs down, 11 o'clock, 3 meters.")
         XCTAssertEqual(Phrasebook.lastSeen(name: "Marcus", bearing: .atClock(1)), "I last saw Marcus at 1 o'clock.")

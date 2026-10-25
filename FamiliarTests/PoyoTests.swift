@@ -25,7 +25,7 @@ final class NarrationPolicyTests: XCTestCase {
 
     func testFarCautionIsNotAnAlert() {
         var p = NarrationPolicy()
-        XCTAssertNotEqual(p.utterances(for: reading(.caution, what: "table", meters: 4), mode: .quiet, now: 0, inConversation: false).first?.category, "hazard")
+        XCTAssertNotEqual(p.utterances(for: reading(.caution, what: "table", meters: 6), mode: .quiet, now: 0, inConversation: false).first?.category, "hazard")
     }
 
     func testHazardsOncePerCooldown() {
@@ -162,6 +162,7 @@ final class PoyoBrainTests: XCTestCase {
     var transcriber: FakeTranscriber!
     var router: CommandRouter!
     var brain: PoyoBrain!
+    var scene: CloudScene!
     var now: TimeInterval = 100
     let marcusID = UUID()
 
@@ -170,7 +171,8 @@ final class PoyoBrainTests: XCTestCase {
         transcriber = FakeTranscriber(text: "")
         let store = InMemoryPeopleStore()
         router = CommandRouter(perception: perception, speaker: speaker, cueGate: gate, consentFlow: flow, peopleStore: store, contacts: NoopContactsBridge(), setMode: { _ in }, setMuted: { _ in })
-        brain = PoyoBrain(vision: vision, scene: CloudScene(client: vision), perception: perception, transcriber: transcriber, speaker: speaker, cueGate: gate, router: router,
+        scene = CloudScene(client: vision)
+        brain = PoyoBrain(vision: vision, scene: scene, perception: perception, transcriber: transcriber, speaker: speaker, cueGate: gate, router: router,
                           userName: { "Caleb" }, knownNames: { ["Marcus"] })
         brain.clock = { [unowned self] in now }
         router.askAssistant = { [weak brain] q in await brain?.ask(q) }
@@ -194,6 +196,17 @@ final class PoyoBrainTests: XCTestCase {
         XCTAssertEqual(speaker.texts, [Phrasebook.nobody])
         await router.handle(.describeSurroundings)
         XCTAssertEqual(vision.prompts.count, 1, "what's around me goes to the live view")
+    }
+
+    func testWhatsAroundMeAnswersAtOnceFromAFreshReading() async {
+        perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.9))]
+        scene.ingest(SceneReading(summary: "Office, chair at 12 o'clock, about 2 meters.", at: now - 1))
+        await brain.ask("what's in front of me")
+        XCTAssertEqual(vision.prompts.count, 0, "no model call")
+        XCTAssertEqual(speaker.texts, ["Marcus, 12 o'clock, close. No one else. Office, chair at 12 o'clock, about 2 meters."])
+        now += 10
+        await brain.ask("what's in front of me")
+        XCTAssertEqual(vision.prompts.count, 1, "stale reading: ask the model")
     }
 
     func testActionsRunThroughTheRouterAndRememberStartsConsent() async {

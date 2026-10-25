@@ -66,7 +66,7 @@ struct SceneReading: Equatable {
     Every face is blacked out on purpose: ignore people completely. Never mention, count or describe people, their \
     clothes or bodies, and never mention the black boxes. Report only what helps them move safely and know where they are.
     path: the walking corridor straight ahead (centre 40% of the image, floor up to head height). status is blocked if a \
-    wall, closed door, furniture or any object is in that corridor within 2.5 m; caution if within 2.5 to 5 m or the way \
+    wall, closed door, furniture or any object is in that corridor within 4 m; caution if within 4 to 7 m or the way \
     narrows; otherwise clear. what: the thing in 1 or 2 words (wall, door, chair, table, pillar, glass door). x: its \
     horizontal centre from 0 (left edge) to 1 (right edge). meters: your distance estimate.
     hazards: things that could trip or hurt: stairs up or down, a step, curb, drop, escalator, wet floor, cables, low \
@@ -202,6 +202,12 @@ final class CloudScene: @unchecked Sendable {
         return (jpeg, image)
     }
 
+    /// Stores and publishes a reading (the model's, or a scripted one in tests and demos).
+    func ingest(_ reading: SceneReading) {
+        state.withLock { $0.reading = reading }
+        bus.publish(reading)
+    }
+
     /// Keeps `latest` and returns it when a scene request is due.
     private func store(_ latest: Latest) -> Latest? {
         state.withLock { s in
@@ -233,8 +239,8 @@ final class CloudScene: @unchecked Sendable {
             let json = try await client.complete(system: SceneReading.systemPrompt, text: "What matters for walking right now?", imageJPEG: jpeg,
                                                  schemaName: "SceneReading", schema: SceneReading.schema, maxTokens: 700, cacheKey: "poyo-scene-v1", timeout: 10)
             guard let reading = SceneReading(json: json, at: latest.t, hFOV: latest.hFOV) else { throw MetaModelClient.ClientError.malformed }
-            state.withLock { $0.reading = reading; $0.status.lastLatency = CACurrentMediaTime() - started; $0.status.lastError = nil }
-            bus.publish(reading)
+            state.withLock { $0.status.lastLatency = CACurrentMediaTime() - started; $0.status.lastError = nil }
+            ingest(reading)
         } catch {
             log.error("scene reading failed: \(error.localizedDescription, privacy: .public)")
             state.withLock { $0.status.lastError = error.localizedDescription }

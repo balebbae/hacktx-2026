@@ -31,7 +31,7 @@ struct HazardPolicy {
     var hazardConfidence: Float = 0.5
     var hazardVotes = 2
     var hazardWindow = 3
-    var obstacleTimeToContact: Double = 1.2
+    var obstacleTimeToContact: Double = 1.8
     var obstacleFrames = 2
     var cooldown: TimeInterval = 8
     var placeConfidence: Float = 0.4

@@ -74,6 +74,18 @@ final class PoyoBrain: ObservableObject {
             followUpUntil = clock() + followUpWindow
             return
         }
+        // "What's around me?" with a scene reading under 4 s old: answer at once from it (people from the phone,
+        // then the model's own summary) instead of waiting ~2.5 s for a fresh call.
+        if addressed, CommandParser.parse(text) == .describeSurroundings, let r = scene.reading, clock() - r.at < 4, let summary = SpeechSanitizer.clean(r.summary) {
+            let tracks = perception.currentTracks()
+            let line = (tracks.isEmpty ? "" : RollCall.phrase(tracks: tracks) + " ") + summary
+            lines.append(AgentLine(role: .user, text: text))
+            lines.append(AgentLine(role: .agent, text: line))
+            let t0 = clock()
+            if let start = await say(line)?.lowerBound { lastLatency = start - t0 }
+            followUpUntil = clock() + followUpWindow
+            return
+        }
         current?.cancel()                       // the newest question wins
         let task = Task { await self.answer(text, addressed: addressed) }
         current = task

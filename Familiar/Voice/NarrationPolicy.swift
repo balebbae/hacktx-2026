@@ -2,7 +2,7 @@ import Foundation
 
 /// Decides what, if anything, to say about a new vision reading. Pure with respect to `now`.
 ///
-///   path      blocked/caution within `alertMeters` → priority 0 at once ("Wall ahead, 2 meters."); repeats every
+///   path      blocked/caution within `alertMeters` (4 m) → priority 0 at once ("Wall ahead, 2 meters."); repeats every
 ///             `pathRepeat` while it stays in the way; re-arms after `rearmClear` seconds of clear path.
 ///   hazards   within `hazardMeters` → priority 0, once per kind per `hazardCooldown`; at most one per reading.
 ///   gist      the model's one-line summary, priority 2, only when the scene changed (new place or a different set
@@ -10,7 +10,8 @@ import Foundation
 ///             conversation is going on, never a near-repeat of the last three lines.
 struct NarrationPolicy {
     struct Config {
-        var alertMeters = 2.5
+        /// Generous on purpose: a reading is about 2.5 s old when it arrives, and the wearer may be walking.
+        var alertMeters = 4.0
         var hazardMeters = 4.0
         var pathRepeat: TimeInterval = 8
         var rearmClear: TimeInterval = 3
