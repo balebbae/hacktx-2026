@@ -81,6 +81,35 @@ final class ElevenLabsTTSTests: XCTestCase {
         XCTAssertEqual(cache.files().count, 2)
     }
 
+    func testSpeedGoesIntoVoiceSettingsAndItsOwnCacheEntry() async throws {
+        TTSStubURLProtocol.handler = { _ in (200, PCM16.encode([Float](repeating: 0.1, count: 160))) }
+        let tts = makeTTS()
+        _ = try await tts.synthesize("Marcus left.")
+        tts.speedProvider = { 1.3 }   // the slider's maximum; ElevenLabs accepts at most 1.2
+        XCTAssertEqual(tts.speed, 1.2, accuracy: 1e-9)
+        XCTAssertFalse(tts.isCached("Marcus left."), "another speed is another entry")
+        _ = try await tts.synthesize("Marcus left.")
+        XCTAssertEqual(TTSStubURLProtocol.requests.count, 2)
+        let sent = try XCTUnwrap(TTSStubURLProtocol.requests.last)
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
+        let settings = try XCTUnwrap(body["voice_settings"] as? [String: Any])
+        XCTAssertEqual(settings["speed"] as? Double ?? 0, 1.2, accuracy: 1e-9)
+        XCTAssertEqual(cache.files().count, 2)
+        XCTAssertEqual(ElevenLabsTTS.cacheModel("m", speed: 1), "m", "1.0 keeps the prewarmed keys valid")
+        XCTAssertEqual(ElevenLabsTTS.cacheModel("m", speed: 0.85), "m@0.85")
+    }
+
+    func testSpeechPreferencesDefaultToUnchanged() {
+        let defaults = UserDefaults(suiteName: "ElevenLabsTTSTests.speech")!
+        defaults.removePersistentDomain(forName: "ElevenLabsTTSTests.speech")
+        XCTAssertEqual(SpeechPreferences.rateMultiplier(defaults), 1)
+        XCTAssertEqual(SpeechPreferences.volume(defaults), 1)
+        defaults.set(2.0, forKey: SpeechPreferences.rateKey)
+        defaults.set(0.1, forKey: SpeechPreferences.volumeKey)
+        XCTAssertEqual(SpeechPreferences.rateMultiplier(defaults), 1.3, "clamped to the slider's range")
+        XCTAssertEqual(SpeechPreferences.volume(defaults), 0.3)
+    }
+
     func testFactoryWithoutKeyIsAppleOnly() {
         let synth = VoiceFactory.makeSynthesizer(apiKey: nil, cacheDirectory: dir)
         XCTAssertEqual(synth.id, "apple")

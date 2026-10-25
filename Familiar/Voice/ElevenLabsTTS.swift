@@ -14,6 +14,9 @@ final class ElevenLabsTTS: SpeechSynthesizer, @unchecked Sendable {
     let session: URLSession
     var firstByteTimeout: TimeInterval = 1.2
     var previousText = "Here is what I see."
+    /// The wearer's speech-rate preference, read per request and clamped to the `speed` range ElevenLabs accepts
+    /// (0.7…1.2). `VoiceFactory` wires it to `SpeechPreferences`; the default is the unchanged 1.0.
+    var speedProvider: () -> Double = { 1 }
     static let sampleRate: Double = 16_000
     private let semaphore: AsyncSemaphore
 
@@ -26,7 +29,7 @@ final class ElevenLabsTTS: SpeechSynthesizer, @unchecked Sendable {
         self.semaphore = AsyncSemaphore(count: maxConcurrent)
     }
 
-    static func request(apiKey: String, voiceID: String, model: String, text: String, previousText: String) -> URLRequest {
+    static func request(apiKey: String, voiceID: String, model: String, text: String, previousText: String, speed: Double = 1.0) -> URLRequest {
         var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)?output_format=pcm_16000")!)
         req.httpMethod = "POST"
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
@@ -35,35 +38,48 @@ final class ElevenLabsTTS: SpeechSynthesizer, @unchecked Sendable {
         let body: [String: Any] = [
             "text": text,
             "model_id": model,
-            "voice_settings": ["stability": 0.5, "similarity_boost": 0.75, "speed": 1.0],
+            "voice_settings": ["stability": 0.5, "similarity_boost": 0.75, "speed": speed],
             "previous_text": previousText,
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return req
     }
 
-    func isCached(_ text: String) -> Bool { cache.has(voiceID: voiceID, model: model, text: text) }
+    /// The speed the next request asks for, inside ElevenLabs' accepted range.
+    var speed: Double { min(1.2, max(0.7, speedProvider())) }
+
+    /// Pace is rendered into the audio, so a phrase at another speed is another cache entry. 1.0 keeps the plain
+    /// model key, so a cache prewarmed before this setting existed stays valid.
+    static func cacheModel(_ model: String, speed: Double) -> String {
+        speed == 1 ? model : "\(model)@\(String(format: "%.2f", speed))"
+    }
+
+    private var cacheModel: String { ElevenLabsTTS.cacheModel(model, speed: speed) }
+
+    func isCached(_ text: String) -> Bool { cache.has(voiceID: voiceID, model: cacheModel, text: text) }
 
     func synthesize(_ text: String) async throws -> SynthesizedAudio {
-        if let cached = cache.samples(voiceID: voiceID, model: model, text: text) {
+        let cacheModel = self.cacheModel
+        if let cached = cache.samples(voiceID: voiceID, model: cacheModel, text: text) {
             return SynthesizedAudio(samples: cached, sampleRate: ElevenLabsTTS.sampleRate, source: "elevenlabs-cache")
         }
         let data = try await fetch(text)
-        cache.store(data, voiceID: voiceID, model: model, text: text)
+        cache.store(data, voiceID: voiceID, model: cacheModel, text: text)
         return SynthesizedAudio(samples: PCM16.decode(data), sampleRate: ElevenLabsTTS.sampleRate, source: id)
     }
 
     /// Synthesizes into the cache without returning audio; used by `prewarm`.
     func warm(_ text: String) async throws {
         guard !isCached(text) else { return }
+        let cacheModel = self.cacheModel
         let data = try await fetch(text)
-        cache.store(data, voiceID: voiceID, model: model, text: text)
+        cache.store(data, voiceID: voiceID, model: cacheModel, text: text)
     }
 
     private func fetch(_ text: String) async throws -> Data {
         await semaphore.wait()
         defer { Task { await semaphore.signal() } }
-        let req = ElevenLabsTTS.request(apiKey: apiKey, voiceID: voiceID, model: model, text: text, previousText: previousText)
+        let req = ElevenLabsTTS.request(apiKey: apiKey, voiceID: voiceID, model: model, text: text, previousText: previousText, speed: speed)
         let timeout = firstByteTimeout
         let session = self.session
         // Race only the response headers (first byte) against the timer; the body streams in afterwards untimed.

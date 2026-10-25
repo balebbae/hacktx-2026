@@ -9,6 +9,9 @@ final class AppleTTS: NSObject, SpeechSynthesizer, @unchecked Sendable {
     let id = "apple"
     let voice: AVSpeechSynthesisVoice?
     var rate: Float = AVSpeechUtteranceDefaultSpeechRate
+    /// The wearer's speech-rate preference (0.8…1.3), read for every render. `VoiceFactory` wires it to
+    /// `SpeechPreferences`; the default leaves `rate` untouched.
+    var rateMultiplier: () -> Double = { 1 }
     static let sampleRate: Double = 16_000
     private let synthesizer = AVSpeechSynthesizer()
     private let serial = AsyncSemaphore(count: 1)
@@ -44,7 +47,8 @@ final class AppleTTS: NSObject, SpeechSynthesizer, @unchecked Sendable {
     private func render(_ text: String) async throws -> [AVAudioPCMBuffer] {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice
-        utterance.rate = rate
+        let scaled: Float = rate * Float(rateMultiplier())
+        utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, scaled))
         let collector = Collector()
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<[AVAudioPCMBuffer], Error>) in
             synthesizer.write(utterance) { buffer in
