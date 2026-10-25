@@ -3,8 +3,8 @@ import Foundation
 /// Cheap, instant name extraction from `other`-attributed segments. Confidence 0.9 for "my name is" / "I'm",
 /// 0.7 for the other patterns. Stop list filters greetings and the user's own name.
 struct RegexNameExtractor: NameExtractor {
-    static let strongPattern = try! NSRegularExpression(pattern: #"\b(?:I'm|I am|my name is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)"#)
-    static let weakPattern = try! NSRegularExpression(pattern: #"\b(?:this is|it's|call me)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)"#)
+    static let strongPattern = try! NSRegularExpression(pattern: #"\b(?:I'm|I am|[Mm]y name is)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)"#)
+    static let weakPattern = try! NSRegularExpression(pattern: #"\b(?:[Tt]his is|[Ii]t's|[Cc]all me)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)"#)
     static let herePattern = try! NSRegularExpression(pattern: #"\b([A-Z][a-z]+) here\b"#)
     static let stopList: Set<String> = ["hi", "hey", "hello", "nice", "okay", "ok", "yes", "no", "sorry", "thanks", "thank", "good", "sure", "fine", "great", "so", "just", "not", "here", "there", "glad", "happy", "really", "very", "also", "still", "back", "done", "building", "working", "going", "doing", "from", "at", "in", "on", "the", "a", "an", "all", "well"]
 

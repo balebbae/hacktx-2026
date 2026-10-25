@@ -24,8 +24,9 @@ struct CompositeNameExtractor: NameExtractor {
             }
             group.addTask { try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000)); return nil }
             var fallback: NameGuess?
-            for await result in group {
-                guard let result else { break }   // timeout fired
+            for await raw in group {
+                guard let raw else { break }   // timeout fired
+                let result = raw.name?.lowercased() == userName.lowercased() ? NameGuess(name: nil, confidence: 0, source: raw.source) : raw
                 if result.name != nil, result.confidence >= threshold { group.cancelAll(); return result }
                 if result.name != nil, (fallback == nil || result.confidence > fallback!.confidence || (result.confidence == fallback!.confidence && result.source == "fm")) { fallback = result }
             }

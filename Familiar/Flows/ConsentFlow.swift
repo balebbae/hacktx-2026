@@ -78,8 +78,7 @@ final class SpokenConsentFlow: ConsentFlow {
             acceptedSpeakers = [.user, .none]
             state = .confirmingWithUser
             notBefore = clock()
-            let window = await speaker.speak(Utterance(text: Phrasebook.wantToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: true))
-            notBefore = window?.upperBound ?? clock()
+            await speaker.speak(Utterance(text: Phrasebook.wantToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: true))
             guard !Task.isCancelled else { return }
             let answer = await firstAnswer(timeout: config.confirmTimeout)
             switch answer {
@@ -114,26 +113,34 @@ final class SpokenConsentFlow: ConsentFlow {
         let gathered = embeddings!
 
         // asking
-        var name = currentNameGuess()
+        var name = await resolveNameGuess()
+        if Task.isCancelled { return }
         cueGate.consentActive = true
         state = .asking(name: name)
         let question = Phrasebook.consentQuestion(userName: userName(), name: name)
         lastQuestion = question
         let clipStart = clock()
         notBefore = clipStart
-        let window = await speaker.speak(Utterance(text: question, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: true))
-        notBefore = window?.upperBound ?? clock()
+        await speaker.speak(Utterance(text: question, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: true))
         if Task.isCancelled { return }
 
         // listening
         state = .listening
-        var answer = await firstAnswer(timeout: config.listenTimeout)
+        var answer: Answer?
+        switch await awaitAnswer(timeout: config.listenTimeout, track: target.trackID) {
+        case let .answer(a): answer = a
+        case .timeout: answer = nil
+        case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return
+        }
         if Task.isCancelled { return }
         if case .spoken(.unclear, _, _) = answer {
             notBefore = clock()
-            let w = await speaker.speak(Utterance(text: Phrasebook.wasThatAYes, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
-            notBefore = w?.upperBound ?? clock()
-            answer = await firstAnswer(timeout: config.reaskTimeout)
+            await speaker.speak(Utterance(text: Phrasebook.wasThatAYes, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
+            switch await awaitAnswer(timeout: config.reaskTimeout, track: target.trackID) {
+            case let .answer(a): answer = a
+            case .timeout: answer = nil
+            case .lost: finish(.cancelled(reason: Phrasebook.theyLeft)); await speakTheyLeft(); return
+            }
             if Task.isCancelled { return }
         }
         let kind: ConsentRecord.Kind
@@ -228,10 +235,18 @@ final class SpokenConsentFlow: ConsentFlow {
         return name
     }
 
+    /// Cache first; otherwise run the extractor over the rolling transcript (regex is instant, LLMs capped at 3 s).
+    private func resolveNameGuess() async -> String? {
+        if let cached = currentNameGuess() { return cached }
+        let segs = transcriber.recentSegments(seconds: 90)
+        let g = await withTimeout(3) { [nameExtractor, userName] in await nameExtractor.otherPersonName(segments: segs, userName: userName()) }
+        guard let g, let name = g.name, g.confidence >= config.nameConfidenceThreshold, name.lowercased() != userName().lowercased() else { return nil }
+        return name
+    }
+
     private func askForName() async -> String? {
         notBefore = clock()
-        let w = await speaker.speak(Utterance(text: Phrasebook.whatShouldICallYou, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
-        notBefore = w?.upperBound ?? clock()
+        await speaker.speak(Utterance(text: Phrasebook.whatShouldICallYou, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
         let replies = await collectReplies(timeout: config.nameTimeout)
         for text in replies {
             if let n = RegexNameExtractor.nameFromDirectReply(text, userName: userName()) { return n }
@@ -277,6 +292,32 @@ final class SpokenConsentFlow: ConsentFlow {
             for await a in stream { return a }
             return nil
         } ?? nil
+    }
+
+    private enum Awaited { case answer(Answer), lost, timeout }
+
+    /// First answer, unless the target track disappears for ~0.8 s first.
+    private func awaitAnswer(timeout: TimeInterval, track: Int) async -> Awaited {
+        let stream = answerBus.subscribe()
+        let poll = config.pollInterval
+        let perception = self.perception
+        let missesNeeded = max(1, Int((0.8 / poll).rounded()))
+        return await withTaskGroup(of: Awaited.self) { group in
+            group.addTask { for await a in stream { return .answer(a) }; return .timeout }
+            group.addTask { try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000)); return .timeout }
+            group.addTask {
+                var misses = 0
+                while !Task.isCancelled {
+                    misses = perception.currentTracks().contains { $0.trackID == track } ? 0 : misses + 1
+                    if misses >= missesNeeded { return .lost }
+                    try? await Task.sleep(nanoseconds: UInt64(poll * 1_000_000_000))
+                }
+                return .timeout
+            }
+            let first = await group.next() ?? .timeout
+            group.cancelAll()
+            return first
+        }
     }
 
     /// Everything the other person said within the window (for "What should I call you?").

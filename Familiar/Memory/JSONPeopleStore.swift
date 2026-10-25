@@ -137,7 +137,7 @@ final class JSONPeopleStore: PeopleStore {
 
     private func rebuildGallery() {
         let id = modelID
-        let g = Gallery(modelID: id, people: people.map { p in (p.id, p.name, p.embeddings.filter { $0.modelID == id }.map(\.vector)) })
+        let g = Gallery(modelID: id, people: people.map { p in (p.id, p.name, p.embeddings.filter { $0.modelID == id }.map(\.vector)) }.filter { !$0.embeddings.isEmpty })
         galleryLock.withLock { $0 = g }
         bus.publish(())
     }

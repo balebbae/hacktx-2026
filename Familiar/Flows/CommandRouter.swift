@@ -31,8 +31,9 @@ final class CommandRouter: ObservableObject {
 
     func attach(sources: [CommandSource]) {
         for source in sources {
+            let stream = source.subscribe()
             tasks.append(Task { [weak self] in
-                for await c in source.subscribe() { await self?.handle(c) }
+                for await c in stream { await self?.handle(c) }
             })
         }
     }
@@ -46,13 +47,14 @@ final class CommandRouter: ObservableObject {
 
     /// Keeps the last-seen memory and the consent-active flag current.
     func startObserving() {
+        let events = perception.subscribe()
+        let states = consentFlow.subscribe()
         tasks.append(Task { [weak self] in
-            guard let self else { return }
-            for await e in self.perception.subscribe() { self.note(e) }
+            for await e in events { self?.note(e) }
         })
         tasks.append(Task { [weak self] in
             guard let self else { return }
-            for await st in self.consentFlow.subscribe() {
+            for await st in states {
                 switch st { case .idle, .done, .declined, .cancelled: self.consentActive = false; default: self.consentActive = true }
             }
         })
