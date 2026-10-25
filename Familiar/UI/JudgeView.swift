@@ -1,10 +1,12 @@
 import SwiftUI
 import QuartzCore
 
-/// What the judges see on the table: the preview with labelled boxes, the last utterances, the event log and the banner.
+/// What the judges see on the table: preview with labelled boxes, match score, last utterances, transcript, event log,
+/// mic meter, audio route, FPS, consent state and the privacy banner.
 struct JudgeView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var coordinator: AppCoordinator
+    @EnvironmentObject var runtime: FlowRuntime
 
     static let banner = "Known people only. Strangers are \"a person\". Faces never leave this phone."
 
@@ -27,6 +29,7 @@ struct JudgeView: View {
                     ForEach(coordinator.tracks, id: \.trackID) { t in
                         trackBox(t, in: geo.size)
                     }
+                    statusOverlay
                 }
             }
             .aspectRatio(9 / 16, contentMode: .fit)
@@ -41,9 +44,10 @@ struct JudgeView: View {
     private func trackBox(_ t: TrackSnapshot, in size: CGSize) -> some View {
         let known = t.identity.isKnown
         let r = CGRect(x: t.faceBox.minX * size.width, y: t.faceBox.minY * size.height, width: t.faceBox.width * size.width, height: t.faceBox.height * size.height)
-        let label = known ? "\(t.identity.name ?? "") \(String(format: "%.2f", t.identity.score ?? 0))" : "person"
+        let score = t.identity.score.map { String(format: " %.2f", $0) } ?? ""
+        let label = known ? "\(t.identity.name ?? "")\(score) · \(t.distance.words)" : "person\(score) · \(t.distance.words)"
         return ZStack(alignment: .topLeading) {
-            Rectangle().stroke(known ? Color.green : Color.gray, lineWidth: 2).frame(width: r.width, height: r.height)
+            Rectangle().stroke(known ? Color.green : Color.gray, style: StrokeStyle(lineWidth: 2, dash: known ? [] : [6, 4])).frame(width: r.width, height: r.height)
             Text(label).font(.caption2.bold()).padding(2)
                 .background(known ? Color.green : Color.gray).foregroundStyle(.black)
                 .offset(y: -16)
@@ -51,21 +55,47 @@ struct JudgeView: View {
         .position(x: r.midX, y: r.midY)
     }
 
+    private var statusOverlay: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Spacer()
+            HStack(spacing: 8) {
+                Text(String(format: "%.0f fps", coordinator.fps))
+                Text(coordinator.services?.audioInput.route.title ?? "–")
+                micMeter
+                Spacer()
+                Text("consent: \(consentLabel)")
+            }
+            .font(.caption2.monospaced()).padding(6).frame(maxWidth: .infinity).background(.black.opacity(0.55)).foregroundStyle(.white)
+        }
+    }
+
+    private var micMeter: some View {
+        let level = coordinator.services?.audioInput.micLevel ?? 0
+        let n = Int((level * 6).rounded())
+        return Text("mic " + String(repeating: "▮", count: n) + String(repeating: "▯", count: max(0, 6 - n)))
+    }
+
     private var previewDescription: String {
         let known = coordinator.tracks.compactMap { $0.identity.name }
         let others = coordinator.tracks.count - known.count
-        return "Camera preview. \(known.isEmpty ? "No known people" : known.joined(separator: ", ")). \(others) other \(others == 1 ? "person" : "people")."
+        return "Camera preview. \(known.isEmpty ? "No known people" : known.joined(separator: ", ")). \(others) other \(others == 1 ? "person" : "people"). Consent \(consentLabel). \(String(format: "%.0f", coordinator.fps)) frames per second."
     }
 
     private var footer: some View {
         List {
             Section("Status") {
-                Text("\(state.mode.title) · \(coordinator.services?.audioInput.route.title ?? "–") · \(String(format: "%.0f fps", coordinator.fps)) · consent \(consentLabel)")
+                Text("\(state.mode.title) · \(state.muted ? "muted" : "unmuted") · \(state.source.title) · \(runtime.people.count) remembered · name guess \(runtime.nameGuess?.name ?? "–")")
                     .font(.footnote.monospaced())
+                    .accessibilityLabel("Status: \(state.mode.title) mode, \(state.muted ? "muted" : "unmuted"), \(runtime.people.count) people remembered")
             }
             Section("Last utterances") {
                 ForEach(coordinator.utterances.suffix(3).reversed()) { e in
-                    Text(e.utterance.text).font(.body.weight(.medium))
+                    HStack {
+                        Text(e.utterance.text).font(.body.weight(.medium))
+                        Spacer()
+                        if let w = e.window { Text(String(format: "%.0f ms", (w.lowerBound - e.at) * 1000)).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+                    }
+                    .accessibilityElement(children: .combine)
                 }
             }
             Section("Transcript (last 10 s)") {
@@ -83,17 +113,5 @@ struct JudgeView: View {
         .listStyle(.plain)
     }
 
-    private var consentLabel: String {
-        switch coordinator.consentState {
-        case .idle: return "idle"
-        case .confirmingWithUser: return "confirming"
-        case .gathering: return "gathering"
-        case .asking: return "asking"
-        case .listening: return "listening"
-        case .saving: return "saving"
-        case .done: return "done"
-        case .declined: return "declined"
-        case .cancelled: return "cancelled"
-        }
-    }
+    private var consentLabel: String { ConsentStateLabel.text(runtime.consentState) }
 }

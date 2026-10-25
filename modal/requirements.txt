@@ -1,0 +1,4 @@
+# Local tooling only (deploy + check scripts). The container image pins its own deps in embed_server.py.
+modal>=1.0
+numpy
+pillow

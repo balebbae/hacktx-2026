@@ -6,6 +6,9 @@ DerivedData/
 build/
 *.xcresult
 __pycache__/
-.venv/
 *.pyc
+.venv/
+venv/
+.modal/
+*.egg-info/
 project.yml.lock
