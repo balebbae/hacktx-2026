@@ -103,7 +103,7 @@ final class SpokenConsentFlow: ConsentFlow {
         guard let gathered = await gatherOrGiveUp(track: target.trackID) else { return }
 
         // asking
-        let name = await resolveNameGuess()
+        var name = await resolveNameGuess()
         if Task.isCancelled { return }
         cueGate.consentActive = true
         pendingTap = nil
@@ -121,7 +121,11 @@ final class SpokenConsentFlow: ConsentFlow {
         state = .listening
         guard let (kind, reply, replyEnd) = await listenForConsent(timeout: config.listenTimeout, track: target.trackID) else { return }
         state = .saving
-        await save(track: target.trackID, gathered: gathered, name: name, phone: nil, kind: kind, question: question, reply: reply, clip: (clipStart, replyEnd))
+        if name == nil { name = await askForName() }
+        if Task.isCancelled { return }
+        let phone = await askForNumber(name: name)
+        if Task.isCancelled { return }
+        await save(track: target.trackID, gathered: gathered, name: name, phone: phone, kind: kind, question: question, reply: reply, clip: (clipStart, replyEnd))
     }
 
     /// Poyo noticed a conversation with someone it does not know. It coaches the wearer, privately in the glasses:

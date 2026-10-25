@@ -11,6 +11,9 @@ final class WakeWordTests: XCTestCase {
         XCTAssertEqual(WakeWord.find(in: "poyo's quiet mode"), "quiet mode")
         XCTAssertEqual(WakeWord.find(in: "okay poyo"), "")
         XCTAssertEqual(WakeWord.find(in: "so I told them poyo is great"), "is great", "exact name counts anywhere")
+        XCTAssertEqual(WakeWord.find(in: "Can you save him to my contacts, Poyo?"), "can you save him to my contacts", "name at the end: the request is before it")
+        XCTAssertEqual(WakeWord.find(in: "Hey, what's in front of me, Poyo?"), "what's in front of me")
+        XCTAssertEqual(WakeWord.find(in: "hey poyo"), "")
         XCTAssertNil(WakeWord.find(in: "I like the pollo asado at that place"), "aliases only near the start")
         XCTAssertNil(WakeWord.find(in: "my family is here"))
         XCTAssertNil(WakeWord.find(in: "nice meeting you marcus"))
@@ -32,6 +35,15 @@ final class WakeWordTests: XCTestCase {
         ww.feed(text: "Poyo, who's here?", isFinal: true, t: 10)
         XCTAssertEqual(hits.count, 1)
         XCTAssertEqual(hits.first?.command, .whoIsHere)
+        XCTAssertFalse(ww.isListeningForCommand)
+    }
+
+    func testRequestBeforeTheNameHitsImmediately() {
+        let ww = WakeWord()
+        var hits: [WakeWordHit] = []
+        ww.onHit = { hits.append($0) }
+        ww.feed(text: "Can you save him to my contacts, Poyo?", isFinal: true, t: 10)
+        XCTAssertEqual(hits.map(\.command), [.rememberThem])
         XCTAssertFalse(ww.isListeningForCommand)
     }
 

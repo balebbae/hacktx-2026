@@ -28,25 +28,34 @@ final class WakeWord: @unchecked Sendable {
 
     var isListeningForCommand: Bool { state.withLock { $0.pending != nil || $0.swallowFinalUntil != nil } }
 
-    /// The text after the wake word in `text`, or nil. Exact "poyo" counts anywhere; aliases and near misses
-    /// (one edit, 4–5 letters, starting with p or b) only in the first three words, where people address it.
+    /// The request around the wake word in `text`, or nil: the words after it, or, when it ends the sentence
+    /// ("Can you save him to my contacts, Poyo?"), the words before it. Exact "poyo" counts anywhere; aliases and
+    /// near misses (one edit, 4–5 letters, starting with p or b) only in the first three words.
     static func find(in text: String) -> String? {
         let cleaned = text.lowercased().replacingOccurrences(of: "[^a-z' ]+", with: " ", options: .regularExpression)
         let tokens = cleaned.split(separator: " ").map(String.init)
+        func request(before i: Int, after j: Int) -> String {
+            let after = tokens[j...].joined(separator: " ")
+            guard after.isEmpty else { return after }
+            let before = tokens[..<i].drop { fillers.contains($0) }
+            return before.allSatisfy { fillers.contains($0) } ? "" : before.joined(separator: " ")
+        }
         for (i, tok) in tokens.enumerated() {
             let stripped = tok.replacingOccurrences(of: "'s$", with: "", options: .regularExpression)
-            if stripped == target { return tokens[(i + 1)...].joined(separator: " ") }
+            if stripped == target { return request(before: i, after: i + 1) }
             guard i < 3 else { continue }
-            if aliases.contains(tok) || aliases.contains(stripped) { return tokens[(i + 1)...].joined(separator: " ") }
+            if aliases.contains(tok) || aliases.contains(stripped) { return request(before: i, after: i + 1) }
             if (4...5).contains(stripped.count), let c = stripped.first, c == "p" || c == "b", levenshtein(stripped, target) <= maxDistance {
-                return tokens[(i + 1)...].joined(separator: " ")
+                return request(before: i, after: i + 1)
             }
             if i + 1 < tokens.count, twoWordAliases.contains("\(tok) \(tokens[i + 1])") {
-                return tokens[(i + 2)...].joined(separator: " ")
+                return request(before: i, after: i + 2)
             }
         }
         return nil
     }
+
+    static let fillers: Set<String> = ["hey", "hi", "ok", "okay", "yo", "so", "um", "uh", "oh", "and"]
 
     func feed(text: String, isFinal: Bool, t: TimeInterval) {
         var emit: WakeWordHit?
