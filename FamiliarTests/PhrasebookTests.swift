@@ -59,4 +59,14 @@ final class PhrasebookTests: XCTestCase {
         XCTAssertEqual(Phrasebook.sceneHazard("stairs down", bearing: .atClock(11), meters: 3), "Stairs down, 11 o'clock, 3 meters.")
         XCTAssertEqual(Phrasebook.lastSeen(name: "Marcus", bearing: .atClock(1)), "I last saw Marcus at 1 o'clock.")
     }
+
+    func testDemoVocabularyIsSafetyFirstAndUnique() {
+        let v = Phrasebook.demoVocabulary(names: ["Marcus", "Priya"])
+        XCTAssertEqual(v.count, Set(v).count, "no duplicates")
+        XCTAssertEqual(Array(v.prefix(Phrasebook.alertPhrases.count)), Phrasebook.alertPhrases, "alerts first")
+        XCTAssertTrue(v.contains(Phrasebook.approaching(name: "Marcus", from: .atClock(12))))
+        XCTAssertTrue(v.contains(Phrasebook.left(name: "Priya")))
+        XCTAssertTrue(v.contains(Phrasebook.action(.crossing(name: nil, leftToRight: true, distance: .close, fast: false))))
+        XCTAssertEqual(Phrasebook.demoVocabulary(names: []).count, Phrasebook.demoVocabulary(names: [""]).count, "blank names add nothing")
+    }
 }

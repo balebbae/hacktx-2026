@@ -194,7 +194,7 @@ final class SelfEnrollModel: ObservableObject, Identifiable {
             try? store.add(person)
         }
         await end()
-        await speaker.speak(Utterance(text: Phrasebook.saved(name: person.name), priority: 0, category: "selfEnroll", personID: id, dedupeKey: nil, audience: .user, earcon: true))
+        await speaker.speak(Utterance(text: Phrasebook.saved(name: person.name), priority: 0, category: "selfEnroll", personID: id, dedupeKey: nil, audience: .user, earcon: false))
         step = .done(person)
     }
 

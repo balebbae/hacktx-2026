@@ -27,6 +27,8 @@ final class AppCoordinator: ObservableObject {
     private weak var state: AppState?
     private var frameTimes: [TimeInterval] = []
     private var narration = NarrationPolicy()
+    /// One hazard is one hazard, whichever detector saw it first.
+    private var hazards = HazardRegistry()
     private var lastCaptionAt: TimeInterval = -.infinity
     /// A routine caption waiting for a pause in the dialogue; in a busy room the pause comes a few seconds later.
     private var pendingCaption: (u: Utterance, at: TimeInterval)?
@@ -68,6 +70,7 @@ final class AppCoordinator: ObservableObject {
         }
         s.scene.start(frames: s.frameSource)
         narration = NarrationPolicy()
+        hazards = HazardRegistry()
         lastCaptionAt = -.infinity
         pendingCaption = nil
         sceneReading = nil
@@ -78,10 +81,17 @@ final class AppCoordinator: ObservableObject {
         s.scene.onExpansion = { [weak motion = s.motion] rate, t in motion?.noteExpansion(rate, at: t) }
         s.cloudScene.isMoving = { [weak motion = s.motion] in motion?.isMoving() ?? false }
         s.cloudScene.start(frames: s.frameSource)
-        // Alerts must play the moment they are decided: fill the TTS cache for them once (kept on disk).
-        tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.alertPhrases + Phrasebook.actionAlertPhrases) })
+        // Alerts must play the moment they are decided, and the first "Marcus, coming toward you." must not switch
+        // to the Apple voice: fill the TTS cache for the alerts, then for everyone in the store (kept on disk).
+        let names = s.peopleStore.all().map(\.name)
+        tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.demoVocabulary(names: names)) })
+        // Every line that reaches the wearer's ear is a turn Poyo took, whichever lane wrote it: the model and
+        // "say that again" read them back from `dialogue`.
         if let voice = s.speaker as? VoiceSpeaker {
-            voice.onSpoken = { DiagnosticLog.write("said[p\($0.utterance.priority) \($0.utterance.category)\($0.source == "apple" ? " apple" : "")] \($0.utterance.text)") }
+            voice.onSpoken = { spoken in
+                DiagnosticLog.write("said[p\(spoken.utterance.priority) \(spoken.utterance.category)\(spoken.source == "apple" ? " apple" : "")] \(spoken.utterance.text)")
+                if spoken.utterance.audience == .user { s.dialogue.record(.poyo, spoken.utterance.text, at: spoken.window?.lowerBound ?? CACurrentMediaTime()) }
+            }
             voice.onDropped = { u, why in DiagnosticLog.write("dropped[\(u.category)] \(why): \(u.text)") }
         }
         tasks.append(Task { [weak self] in
@@ -104,7 +114,10 @@ final class AppCoordinator: ObservableObject {
         })
         if let logSpeaker = s.logSpeaker {
             tasks.append(Task { [weak self] in
-                for await entry in logSpeaker.subscribe() { await MainActor.run { self?.utterances = Array((self?.utterances ?? []).suffix(49)) + [entry] } }
+                for await entry in logSpeaker.subscribe() {
+                    if entry.utterance.audience == .user { s.dialogue.record(.poyo, entry.utterance.text, at: entry.at) }
+                    await MainActor.run { self?.utterances = Array((self?.utterances ?? []).suffix(49)) + [entry] }
+                }
             })
         }
         tasks.append(Task { [weak self] in
@@ -229,6 +242,8 @@ final class AppCoordinator: ObservableObject {
         switch e {
         case let .hazard(kind):
             guard s.motion.isMoving() else { return }        // standing still: not about to walk into it
+            // The vision model may have said "Stairs down, 12 o'clock, 3 meters." a second ago: same stairs.
+            guard hazards.admit(HazardSighting(kind: kind.rawValue, clock: 12, meters: nil), now: CACurrentMediaTime()) else { log("hazard \(kind.rawValue) already announced"); return }
             u = Utterance(text: Phrasebook.hazard(kind), priority: 0, category: "hazard", personID: nil, dedupeKey: "hazard:\(kind.rawValue)", audience: .user, earcon: true)
         case let .placeChanged(place):
             guard state.mode == .chatty, !conversationActive(s) else { return }
@@ -258,12 +273,15 @@ final class AppCoordinator: ObservableObject {
         Task { await s.speaker.speak(p.u) }
     }
 
-    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed.
+    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed. An alert
+    /// about a hazard the on-device detector already announced is dropped.
     private func handle(reading r: SceneReading, services s: Services, state: AppState) {
         sceneReading = r
         log("vision \(r.path.rawValue)\(r.pathMeters.map { " \($0) m" } ?? ""): \(r.summary)")
-        for u in narration.utterances(for: r, mode: state.mode, now: CACurrentMediaTime(), inConversation: conversationActive(s), moving: s.motion.isMoving()) where s.cueGate.admit(u) {
-            Task { await s.speaker.speak(u) }
+        let now = CACurrentMediaTime()
+        for n in narration.decide(for: r, mode: state.mode, now: now, inConversation: conversationActive(s), moving: s.motion.isMoving()) where s.cueGate.admit(n.utterance) {
+            if let h = n.hazard, !hazards.admit(h, now: now) { log("hazard \(h.kind) already announced: \(n.utterance.text)"); continue }
+            Task { await s.speaker.speak(n.utterance) }
         }
     }
 
@@ -302,7 +320,7 @@ final class AppCoordinator: ObservableObject {
     func whoIsHere() {
         guard let s = services else { return }
         let text = RollCall.phrase(tracks: s.perception.currentTracks())
-        let u = Utterance(text: text, priority: 1, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: true)
+        let u = Utterance(text: text, priority: 1, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: false)
         log("command whoIsHere")
         Task { await s.speaker.speak(u) }
     }

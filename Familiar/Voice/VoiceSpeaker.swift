@@ -7,6 +7,9 @@ import os
 /// - priorities 1–3 are FIFO with depth `maxQueued` (the lowest-priority queued item is dropped when full);
 /// - an utterance with the same `dedupeKey` replaces the queued one;
 /// - utterances of priority ≥ 1 start at least `minimumSpacing` after the previous utterance ended;
+/// - uncached text streams from the synthesizer into playback when both sides can (`streaming`), so the first word
+///   plays before the last is synthesized; a stream that never starts falls back to the plain path;
+/// - the line just spoken becomes the synthesizer's `previous_text`, so consecutive lines sound like one voice;
 /// - `prewarm` synthesizes into the cache with concurrency 2.
 final class VoiceSpeaker: Speaker, @unchecked Sendable {
     typealias Clock = () -> TimeInterval
@@ -14,9 +17,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
 
     struct Spoken: Equatable { let utterance: Utterance; let window: ClosedRange<TimeInterval>?; let source: String }
 
-    var minimumSpacing: TimeInterval = 4
+    var minimumSpacing: TimeInterval = 1.5
     var maxQueued = 2
+    /// Bluetooth output swallows the first ~150 ms after silence; wired or built-in output needs no lead-in.
     var leadingSilence: TimeInterval = 0.15
+    /// Whether the current output route is Bluetooth; nil (tests) keeps the lead-in.
+    var isBluetoothOutput: (() -> Bool)?
+    var streaming = true
     /// Fires for every utterance that reached playback (the judge view's utterance log).
     var onSpoken: ((Spoken) -> Void)?
     var onDropped: ((Utterance, String) -> Void)?
@@ -118,23 +125,62 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
             if wait > 0 { await sleep(wait) }
             if !isCurrent(job) { return nil }    // interrupted while waiting
         }
+        let gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
+        func prefix(for sampleRate: Double) -> [Float] {
+            var p = [Float](repeating: 0, count: Int(((isBluetoothOutput?() ?? true) ? leadingSilence : 0) * sampleRate))
+            if u.earcon { p += Earcon.prefix(for: sampleRate) }
+            return p
+        }
+        var streamError: Error?
+        if streaming, let synth = synthesizer as? StreamingSpeechSynthesizer, let player = playback as? StreamingPCMPlayback, let stream = synth.stream(u.text) {
+            // The first chunk decides: in hand → play as it arrives; a failure → the plain path (and its fallback voice).
+            var iterator = stream.makeAsyncIterator()
+            do {
+                guard let first = try await iterator.next() else { throw ElevenLabsTTS.Failure.emptyAudio }
+                guard isCurrent(job) else { return nil }
+                let rest = AsyncThrowingStream<[Float], Error> { cont in
+                    cont.yield(first)
+                    let t = Task { [iterator] in
+                        var it = iterator       // the copy shares the stream's storage; one consumer still
+                        do { while let chunk = try await it.next() { cont.yield(chunk) }; cont.finish() } catch { cont.finish(throwing: error) }
+                    }
+                    cont.onTermination = { _ in t.cancel() }
+                }
+                state.withLock { $0.speaking = true }
+                let window = await player.playStream(rest, sampleRate: synth.streamSampleRate, prefix: prefix(for: synth.streamSampleRate), gain: gain, audience: u.audience)
+                return finish(job, window: window, source: "elevenlabs-stream")
+            } catch {
+                streamError = error
+            }
+        }
         let audio: SynthesizedAudio
-        do { audio = try await synthesizer.synthesize(u.text) } catch {
+        do {
+            if let streamError, let fb = synthesizer as? FallbackSynthesizer { audio = try await fb.synthesizeAfterPrimaryFailed(u.text, error: streamError) }
+            else { audio = try await synthesizer.synthesize(u.text) }
+        } catch {
             onDropped?(u, "synthesis failed: \(error)")
             return nil
         }
         guard isCurrent(job) else { return nil }
-        var samples = [Float](repeating: 0, count: Int(leadingSilence * audio.sampleRate))
-        if u.earcon { samples += Earcon.prefix(for: audio.sampleRate) }
-        samples += audio.samples
-        let gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
+        var samples = prefix(for: audio.sampleRate) + audio.samples
         if gain != 1 { samples = samples.map { $0 * gain } }
         state.withLock { $0.speaking = true }
         let window = await playback.play(SynthesizedAudio(samples: samples, sampleRate: audio.sampleRate, source: audio.source), audience: u.audience)
-        let spoken = Spoken(utterance: u, window: window, source: audio.source)
+        return finish(job, window: window, source: audio.source)
+    }
+
+    private func finish(_ job: Job, window: ClosedRange<TimeInterval>?, source: String) -> ClosedRange<TimeInterval>? {
+        let u = job.utterance
+        let spoken = Spoken(utterance: u, window: window, source: source)
         spokenLog.withLock { $0.append(spoken); if $0.count > 200 { $0.removeFirst() } }
+        // One voice: the next line is synthesized as a continuation of this one.
+        if window != nil, u.audience == .user { Self.elevenLabs(in: synthesizer)?.previousText = u.text }
         onSpoken?(spoken)
         return window
+    }
+
+    private static func elevenLabs(in synth: SpeechSynthesizer) -> ElevenLabsTTS? {
+        (synth as? ElevenLabsTTS) ?? ((synth as? FallbackSynthesizer)?.primary as? ElevenLabsTTS)
     }
 
     private func isCurrent(_ job: Job) -> Bool { state.withLock { $0.current?.id == job.id } }
@@ -162,12 +208,6 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
     }
 
     private static func warm(_ phrase: String, with synth: SpeechSynthesizer) async {
-        if let fallback = synth as? FallbackSynthesizer, let eleven = fallback.primary as? ElevenLabsTTS {
-            try? await eleven.warm(phrase)
-        } else if let eleven = synth as? ElevenLabsTTS {
-            try? await eleven.warm(phrase)
-        } else {
-            _ = try? await synth.synthesize(phrase)
-        }
+        if let eleven = elevenLabs(in: synth) { try? await eleven.warm(phrase) } else { _ = try? await synth.synthesize(phrase) }
     }
 }

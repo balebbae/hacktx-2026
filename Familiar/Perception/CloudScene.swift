@@ -152,6 +152,7 @@ final class CloudScene: @unchecked Sendable {
     struct Status: Equatable { var uploads = 0; var lastLatency: TimeInterval?; var lastError: String? }
 
     private struct Latest { let image: CGImage; let thumb: [Float]; let t: TimeInterval; let hFOV: Double }
+    private struct Redacted { let jpeg: Data; let image: CGImage; let t: TimeInterval }
     private struct State {
         var latest: Latest?
         var reading: SceneReading?
@@ -159,6 +160,8 @@ final class CloudScene: @unchecked Sendable {
         var lastSentAt: TimeInterval = -.infinity
         var lastSentThumb: [Float]?
         var lastUpload: CGImage?
+        /// The last redaction done (for a reading or a question), reused for a question when still fresh.
+        var lastRedacted: Redacted?
         var status = Status()
     }
 
@@ -198,11 +201,18 @@ final class CloudScene: @unchecked Sendable {
         state.withLock { $0.latest = nil; $0.inFlight = 0 }
     }
 
-    /// Freshest view with every face blacked out, for a question. nil when there is no frame yet or face detection
-    /// is unavailable (nothing is uploaded then).
-    func redactedSnapshot() -> (jpeg: Data, image: CGImage)? {
+    /// Freshest view with every face blacked out, for a question: the last redaction when its frame is under
+    /// `maxAge` old (every reading redacts on the way out), else a fresh one, done off the caller's thread so a
+    /// question never stalls the UI. nil when there is no frame yet or face detection is unavailable (nothing is
+    /// uploaded then).
+    func redactedSnapshot(maxAge: TimeInterval = 1) async -> (jpeg: Data, image: CGImage)? {
+        if let r = state.withLock({ $0.lastRedacted }), CACurrentMediaTime() - r.t < maxAge { return (r.jpeg, r.image) }
+        return await Task.detached(priority: .userInitiated) { [self] in redactLatest() }.value
+    }
+
+    private func redactLatest() -> (jpeg: Data, image: CGImage)? {
         guard let latest = state.withLock({ $0.latest }), let image = redact(latest.image), let jpeg = FrameRedactor.jpeg(image) else { return nil }
-        state.withLock { $0.lastUpload = image }
+        state.withLock { $0.lastUpload = image; $0.lastRedacted = Redacted(jpeg: jpeg, image: image, t: latest.t) }
         return (jpeg, image)
     }
 
@@ -239,7 +249,7 @@ final class CloudScene: @unchecked Sendable {
             log.error("face check unavailable: nothing uploaded")
             return
         }
-        state.withLock { $0.lastUpload = image; $0.status.uploads += 1 }
+        state.withLock { $0.lastUpload = image; $0.lastRedacted = Redacted(jpeg: jpeg, image: image, t: latest.t); $0.status.uploads += 1 }
         let started = CACurrentMediaTime()
         do {
             let json = try await client.complete(system: SceneReading.systemPrompt, text: "What matters for walking right now?", imageJPEG: jpeg,

@@ -17,6 +17,8 @@ final class CommandRouter: ObservableObject {
     var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
     /// Set when Poyo runs on the vision model: "what's around me" is answered from the live view instead.
     var askAssistant: ((String) async -> Void)?
+    /// Everything spoken lately, whichever lane said it: "say that again" repeats Poyo's last line from here.
+    var dialogue: DialogueMemory?
     private let clock: () -> TimeInterval
     private var tasks: [Task<Void, Never>] = []
     private var lastGoodbyeFlowAt: TimeInterval = -.infinity
@@ -130,7 +132,9 @@ final class CommandRouter: ObservableObject {
             let tracks = perception.currentTracks()
             await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 0, category: "surroundings")
         case .repeatLast:
-            if let u = lastUtterance { await speaker.speak(u) } else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
+            if let text = dialogue?.lastPoyoLine(now: clock()) { await say(text, priority: 0, category: "repeat") }
+            else if let u = lastUtterance { await speaker.speak(u) }
+            else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
         }
     }
 

@@ -9,8 +9,9 @@ import os
 ///                chatty = normal + "someone close" for strangers
 /// Cooldowns:     appeared 30 s, and never for someone seen in the last 8 s (tracks flicker) · approaching 20 s (and never within 5 s after an arrival) · arrived 30 s ·
 ///                left only if the person was close within the last 120 s · unknown close 20 s · speaking once per track
-///                (S7: priority 1, no earcon, played −6 dB via `SpeakerVolumeHint`; `ActiveSpeaker` already gates by person).
+///                (S7: priority 1, played −6 dB via `SpeakerVolumeHint`; `ActiveSpeaker` already gates by person).
 /// `approaching` and `arrived` share a dedupeKey so an arrival within 5 s replaces a still-queued approach.
+/// No earcon: the chime is reserved for safety alerts and "heard you", so one sound means one thing.
 final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
     struct Cooldowns {
         var appeared: TimeInterval = 30
@@ -89,7 +90,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
             case let .speakingStarted(t):
                 guard mode != .quiet, case let .known(pid, name, _) = t.identity else { return [] }
                 guard s.spokenTracks.insert(t.trackID).inserted else { return [] }
-                return [cue(Phrasebook.speaking(name: name), pid, "speaking", priority: 1, dedupeKey: "speaking:\(pid.uuidString)", earcon: false)]   // S7
+                return [cue(Phrasebook.speaking(name: name), pid, "speaking", priority: 1, dedupeKey: "speaking:\(pid.uuidString)")]   // S7
 
             case let .snapshot(tracks, _):
                 for t in tracks {
@@ -104,7 +105,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
                 if let last = s.unknownCloseTracks[first.trackID], now - last < cooldowns.unknownClose * 3 { return [] }
                 s.lastUnknownClose = now
                 s.unknownCloseTracks[first.trackID] = now
-                return [cue(Phrasebook.unknownClose(bearing: first.bearing), nil, "unknownClose", priority: 3, dedupeKey: "unknownClose", earcon: false)]
+                return [cue(Phrasebook.unknownClose(bearing: first.bearing), nil, "unknownClose", priority: 3, dedupeKey: "unknownClose")]
 
             case .unknownCountChanged, .cue:
                 return []
@@ -112,7 +113,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
         }
     }
 
-    private func cue(_ text: String, _ pid: UUID?, _ category: String, priority: Int, dedupeKey: String? = nil, earcon: Bool = true) -> Utterance {
-        Utterance(text: text, priority: priority, category: category, personID: pid, dedupeKey: dedupeKey ?? "\(category):\(pid?.uuidString ?? "")", audience: .user, earcon: earcon)
+    private func cue(_ text: String, _ pid: UUID?, _ category: String, priority: Int, dedupeKey: String? = nil) -> Utterance {
+        Utterance(text: text, priority: priority, category: category, personID: pid, dedupeKey: dedupeKey ?? "\(category):\(pid?.uuidString ?? "")", audience: .user, earcon: false)
     }
 }

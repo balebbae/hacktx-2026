@@ -44,17 +44,24 @@ struct NarrationPolicy {
     private var lastGistObjects: Set<String> = []
     private var recent: [String] = []
 
+    /// What to say, and for alerts the hazard it is about, so `HazardRegistry` can match it against the other detector.
+    struct Narration: Equatable { let utterance: Utterance; let hazard: HazardSighting? }
+
     init(config: Config = Config()) { self.config = config }
 
     mutating func utterances(for r: SceneReading, mode: ChatterMode, now: TimeInterval, inConversation: Bool, moving: Bool = true) -> [Utterance] {
-        if moving, let u = pathAlert(r, now: now, closeOnly: mode == .quiet || inConversation, inConversation: inConversation) { return [u] }
-        if moving, let u = hazard(r, now: now) { return [u] }
+        decide(for: r, mode: mode, now: now, inConversation: inConversation, moving: moving).map(\.utterance)
+    }
+
+    mutating func decide(for r: SceneReading, mode: ChatterMode, now: TimeInterval, inConversation: Bool, moving: Bool = true) -> [Narration] {
+        if moving, let n = pathAlert(r, now: now, closeOnly: mode == .quiet || inConversation, inConversation: inConversation) { return [n] }
+        if moving, let n = hazard(r, now: now) { return [n] }
         // Standing in a crowd the room changes every second and none of it is news; "Poyo, what's around me?" answers.
-        if mode == .chatty, let u = gist(r, now: now, inConversation: inConversation) { return [u] }
+        if mode == .chatty, let u = gist(r, now: now, inConversation: inConversation) { return [Narration(utterance: u, hazard: nil)] }
         return []
     }
 
-    private mutating func pathAlert(_ r: SceneReading, now: TimeInterval, closeOnly: Bool, inConversation: Bool) -> Utterance? {
+    private mutating func pathAlert(_ r: SceneReading, now: TimeInterval, closeOnly: Bool, inConversation: Bool) -> Narration? {
         let reported = r.pathMeters ?? (r.path == .blocked ? config.alertMeters : nil)
         guard r.path != .clear, let reported, reported <= config.alertMeters else {
             if clearSince == nil { clearSince = now }
@@ -75,18 +82,21 @@ struct NarrationPolicy {
         }
         lastPathAlert = now
         lastAlertMeters = m
-        return Self.alert(Phrasebook.pathAlert(what: r.pathWhat, bearing: r.bearing(r.pathX), meters: r.pathMeters.map { _ in m }), key: "path")
+        let bearing = r.bearing(r.pathX)
+        return Narration(utterance: Self.alert(Phrasebook.pathAlert(what: r.pathWhat, bearing: bearing, meters: r.pathMeters.map { _ in m }), key: "path"),
+                         hazard: HazardSighting(kind: HazardSighting.obstacle, clock: bearing.clock, meters: r.pathMeters.map { _ in m }))
     }
 
-    private mutating func hazard(_ r: SceneReading, now: TimeInterval) -> Utterance? {
+    private mutating func hazard(_ r: SceneReading, now: TimeInterval) -> Narration? {
         guard now - lastHazardAt >= config.hazardGap else { return nil }
         for h in r.hazards where (h.meters ?? 0) <= config.hazardMeters {
             let key = h.name.lowercased()
             if let last = hazardSpoken[key], now - last < config.hazardCooldown { continue }
-            guard let text = SpeechSanitizer.clean(Phrasebook.sceneHazard(h.name, bearing: r.bearing(h.x), meters: h.meters)) else { continue }
+            let bearing = r.bearing(h.x)
+            guard let text = SpeechSanitizer.clean(Phrasebook.sceneHazard(h.name, bearing: bearing, meters: h.meters)) else { continue }
             hazardSpoken[key] = now
             lastHazardAt = now
-            return Self.alert(text, key: "hazard:\(key)")
+            return Narration(utterance: Self.alert(text, key: "hazard:\(key)"), hazard: HazardSighting(kind: HazardSighting.kind(h.name), clock: bearing.clock, meters: h.meters))
         }
         return nil
     }

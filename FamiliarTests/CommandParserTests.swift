@@ -23,7 +23,8 @@ final class CommandParserTests: XCTestCase {
     }
 
     func testNegatives() {
-        let negatives = ["", "   ", "the weather is nice today", "I'm Marcus, nice to meet you", "hello there", "what time is it", "remember to buy milk", "call", "text them", "I like this song", "we met at the conference", "so anyway"]
+        let negatives = ["", "   ", "the weather is nice today", "I'm Marcus, nice to meet you", "hello there", "what time is it", "remember to buy milk", "call", "text them", "I like this song", "we met at the conference", "so anyway",
+                         "where did he go", "where is she", "call him"]      // pronouns: questions for Poyo, who has the dialogue
         for text in negatives {
             XCTAssertNil(CommandParser.parse(text), "\"\(text)\" should not be a command")
         }
