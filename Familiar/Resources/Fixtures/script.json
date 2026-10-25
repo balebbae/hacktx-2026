@@ -1,0 +1,12 @@
+[
+  {"t": 1,  "event": "unknownCountChanged", "count": 3},
+  {"t": 8,  "event": "knownAppeared",     "name": "Marcus", "band": "farRight", "distance": "far",    "trackID": 10},
+  {"t": 13, "event": "knownApproaching",  "name": "Marcus", "band": "right",    "distance": "medium", "trackID": 10},
+  {"t": 18, "event": "knownArrived",      "name": "Marcus", "band": "ahead",    "distance": "close",  "trackID": 10},
+  {"t": 24, "event": "speakingStarted",   "name": "Marcus", "band": "ahead",    "distance": "close",  "trackID": 10},
+  {"t": 30, "event": "unknownCountChanged", "count": 1},
+  {"t": 36, "event": "knownLeft",         "name": "Marcus"},
+  {"t": 48, "event": "knownAppeared",     "name": "Marcus", "band": "left",     "distance": "medium", "trackID": 11},
+  {"t": 54, "event": "knownArrived",      "name": "Marcus", "band": "ahead",    "distance": "close",  "trackID": 11},
+  {"t": 60, "event": "unknownCountChanged", "count": 0}
+]

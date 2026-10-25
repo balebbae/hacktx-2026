@@ -1,0 +1,14 @@
+{
+  "fov": {"horizontalDegrees": 53, "verticalDegrees": 85},
+  "clips": [
+    {"file": "enroll_marcus.mp4", "role": "enroll", "person": "Marcus", "notes": "8 s, Marcus at ~1-1.5 m facing the camera with head turns"},
+    {"file": "approach_marcus.mp4", "expectKnown": ["Marcus"], "expectEvents": ["knownApproaching", "knownArrived"], "maxUnknownEvents": 0, "notes": "3 s, short; approach from the right edge to ~1 m"},
+    {"file": "leave_marcus.mp4", "expectKnown": ["Marcus"], "expectEvents": ["knownLeft"], "notes": "4.4 s, Marcus close then walks off to the left"},
+    {"file": "strangers.mp4", "expectKnown": [], "maxKnownEvents": 0, "notes": "11 s, people who were never enrolled"},
+    {"file": "mixed.mp4", "expectKnown": ["Marcus"], "onlyKnown": ["Marcus"], "notes": "8 s, Marcus plus strangers"},
+    {"file": "conversation.mp4", "transcript": "conversation.txt", "expectName": "Marcus", "expectGoodbye": true, "notes": "29 s with audio: 'Hi, I'm Marcus' ... 'nice meeting you'"},
+    {"file": "yes_reply.mp4", "transcript": "yes_reply.txt", "expectYesNo": "yes", "notes": "9 s with audio: the consent question read aloud, then 'Yes, sure.'"},
+    {"file": "no_reply.mp4", "transcript": "no_reply.txt", "expectYesNo": "no", "notes": "not recorded yet; transcript only"},
+    {"file": "distance_calibration.mp4", "role": "calibration", "notes": "not recorded yet; use tape marks at 1 / 2 / 3 m"}
+  ]
+}

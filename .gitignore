@@ -1,0 +1,11 @@
+Secrets.xcconfig
+xcuserdata/
+DerivedData/
+*.pcm
+.DS_Store
+build/
+*.xcresult
+__pycache__/
+.venv/
+*.pyc
+project.yml.lock

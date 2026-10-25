@@ -1,0 +1,8 @@
+user: Hi there!
+other: Hey, hi! I'm Marcus.
+user: Nice to meet you, Marcus. I'm Priya.
+other: What are you building?
+user: Glasses that tell me who is around me.
+other: Oh, that's awesome.
+user: Well, nice meeting you.
+other: Nice meeting you too, see you around.
