@@ -175,8 +175,7 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
             embedsThisFrame += 1
             var quality = Self.quality(heightPx: Double(t.box.height) * Double(result.uprightSize.height), yaw: t.yawDegrees, confidence: t.detection.confidence)
             if t.detection.landmarkSource == .box { quality *= 0.9 }
-            let thumb = t.embeddings.count < tracker.config.maxEmbeddings || quality > (t.embeddings.map(\.embedding.quality).min() ?? 0)
-                ? aligner.thumbnail(frame.pixelBuffer, orientation: frame.orientation, box: t.box) : nil
+            let thumb = aligner.thumbnail(frame.pixelBuffer, orientation: frame.orientation, box: t.box)
             let emb = FaceEmbedding(modelID: embedder.modelID, vector: vector, quality: quality, timestamp: now, thumbnailJPEG: thumb)
             let gal = gallery?.gallery() ?? Gallery(modelID: embedder.modelID, people: [])
             let match = matcher.match(vector, gallery: gal, modelID: embedder.modelID)
