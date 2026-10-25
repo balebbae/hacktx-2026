@@ -57,8 +57,10 @@ final class Services: ObservableObject {
     static func make(source: Source, state: AppState) -> Services {
         let frameSource: FrameSource
         switch source {
-        case .phone, .glasses:
+        case .phone:
             frameSource = PhoneCameraFrameSource()
+        case .glasses:
+            frameSource = GlassesFactory.makeFrameSource()
         case let .fixture(name):
             frameSource = VideoFileFrameSource(fixtureNamed: name) ?? SilentFrameSource()
         }
