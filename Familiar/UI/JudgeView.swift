@@ -1,8 +1,111 @@
 import SwiftUI
 import QuartzCore
 
-/// What the judges see on the table: preview with labelled boxes, match score, last utterances, transcript, event log,
-/// mic meter, audio route, FPS, consent state and the privacy banner.
+/// Pure, snapshot-friendly stage: the camera preview, boxes drawn in a Canvas, name pills, and a floating glass HUD
+/// with the last cues, fps, audio route, consent state and the mic meter. `JudgeView` feeds it live values.
+struct JudgeStageView: View {
+    let tracks: [TrackSnapshot]
+    let preview: CGImage?
+    let fps: Double
+    let route: String
+    let micLevel: Float
+    let consent: String
+    let cues: [String]
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                Color.black
+                if let preview {
+                    Image(decorative: preview, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                } else {
+                    noSignal
+                }
+                Canvas { context, size in
+                    for track in tracks {
+                        let rect = self.rect(for: track, in: size)
+                        let known = track.identity.isKnown
+                        let color = known ? FamiliarTheme.known : FamiliarTheme.unknown
+                        let path = Path(roundedRect: rect, cornerRadius: 12)
+                        if known { context.fill(path, with: .color(color.opacity(0.10))) }
+                        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: known ? 3 : 2, dash: known ? [] : [8, 6]))
+                    }
+                }
+                .accessibilityHidden(true)
+                ForEach(tracks, id: \.trackID) { track in
+                    let rect = self.rect(for: track, in: geo.size)
+                    label(for: track)
+                        .offset(x: rect.minX, y: max(8, rect.minY - 30))
+                }
+                VStack {
+                    Spacer()
+                    hud
+                }
+                .padding(12)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(description)
+    }
+
+    private func rect(for track: TrackSnapshot, in size: CGSize) -> CGRect {
+        CGRect(x: track.faceBox.minX * size.width,
+               y: track.faceBox.minY * size.height,
+               width: track.faceBox.width * size.width,
+               height: track.faceBox.height * size.height)
+    }
+
+    private func label(for track: TrackSnapshot) -> some View {
+        let known = track.identity.isKnown
+        let color = known ? FamiliarTheme.known : FamiliarTheme.unknown
+        let score = track.identity.score.map { String(format: "%.2f", $0) }
+        return HStack(spacing: 6) {
+            Text(known ? (track.identity.name ?? "") : "person").font(.familiarCaption.weight(.bold))
+            if let score { Text(score).font(.familiarMono) }
+            Text(track.distance.words).font(.familiarCaption)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color, in: Capsule())
+        .foregroundStyle(.black)
+        .fixedSize()
+    }
+
+    private var hud: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CueTicker(cues: cues)
+            HStack(spacing: 8) {
+                StatusPill(text: String(format: "%.0f fps", fps), systemImage: "speedometer")
+                StatusPill(text: route, systemImage: "headphones")
+                StatusPill(text: consent, systemImage: "hand.raised", color: FamiliarTheme.consent)
+                Spacer(minLength: 0)
+                MicMeter(level: micLevel)
+            }
+        }
+        .padding(16)
+        .glassCard()
+    }
+
+    private var noSignal: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "eyeglasses").font(.system(size: 44)).foregroundStyle(.secondary)
+            Text("Waiting for frames").font(.familiarBody).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var description: String {
+        let known = tracks.compactMap { $0.identity.name }
+        let others = tracks.count - known.count
+        return "Camera view. \(known.isEmpty ? "No known people" : known.joined(separator: ", ")). \(others) other \(others == 1 ? "person" : "people"). Consent \(consent). \(String(format: "%.0f", fps)) frames per second."
+    }
+}
+
+/// What the judges see on the table: the stage above, a short status strip and the recent transcript and events below.
 struct JudgeView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var coordinator: AppCoordinator
@@ -11,107 +114,44 @@ struct JudgeView: View {
     static let banner = "Known people only. Strangers are \"a person\". Faces never leave this phone."
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(Self.banner)
-                .font(.footnote.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .padding(8)
-                .frame(maxWidth: .infinity)
-                .background(Color.accentColor.opacity(0.15))
-                .accessibilityAddTraits(.isHeader)
-            GeometryReader { geo in
-                ZStack(alignment: .topLeading) {
-                    Color.black
-                    if let cg = coordinator.preview {
-                        Image(decorative: cg, scale: 1).resizable().aspectRatio(contentMode: .fill)
-                            .frame(width: geo.size.width, height: geo.size.height).clipped()
-                    }
-                    ForEach(coordinator.tracks, id: \.trackID) { t in
-                        trackBox(t, in: geo.size)
-                    }
-                    statusOverlay
-                }
-            }
-            .aspectRatio(9 / 16, contentMode: .fit)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(previewDescription)
-            footer
+        VStack(spacing: 12) {
+            PrivacyBanner(text: Self.banner)
+            JudgeStageView(tracks: coordinator.tracks,
+                           preview: coordinator.preview,
+                           fps: coordinator.fps,
+                           route: coordinator.services?.audioInput.route.title ?? "–",
+                           micLevel: coordinator.services?.audioInput.micLevel ?? 0,
+                           consent: ConsentStateLabel.text(runtime.consentState),
+                           cues: coordinator.utterances.suffix(3).map { $0.utterance.text })
+                .aspectRatio(9 / 16, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: FamiliarTheme.cardRadius, style: .continuous))
+            details
         }
+        .padding(.horizontal, 12)
+        .familiarScreen()
         .navigationTitle("Judge view")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func trackBox(_ t: TrackSnapshot, in size: CGSize) -> some View {
-        let known = t.identity.isKnown
-        let r = CGRect(x: t.faceBox.minX * size.width, y: t.faceBox.minY * size.height, width: t.faceBox.width * size.width, height: t.faceBox.height * size.height)
-        let score = t.identity.score.map { String(format: " %.2f", $0) } ?? ""
-        let label = known ? "\(t.identity.name ?? "")\(score) · \(t.distance.words)" : "person\(score) · \(t.distance.words)"
-        return ZStack(alignment: .topLeading) {
-            Rectangle().stroke(known ? Color.green : Color.gray, style: StrokeStyle(lineWidth: 2, dash: known ? [] : [6, 4])).frame(width: r.width, height: r.height)
-            Text(label).font(.caption2.bold()).padding(2)
-                .background(known ? Color.green : Color.gray).foregroundStyle(.black)
-                .offset(y: -16)
-        }
-        .position(x: r.midX, y: r.midY)
-    }
-
-    private var statusOverlay: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Spacer()
-            HStack(spacing: 8) {
-                Text(String(format: "%.0f fps", coordinator.fps))
-                Text(coordinator.services?.audioInput.route.title ?? "–")
-                micMeter
-                Spacer()
-                Text("consent: \(consentLabel)")
-            }
-            .font(.caption2.monospaced()).padding(6).frame(maxWidth: .infinity).background(.black.opacity(0.55)).foregroundStyle(.white)
-        }
-    }
-
-    private var micMeter: some View {
-        let level = coordinator.services?.audioInput.micLevel ?? 0
-        let n = Int((level * 6).rounded())
-        return Text("mic " + String(repeating: "▮", count: n) + String(repeating: "▯", count: max(0, 6 - n)))
-    }
-
-    private var previewDescription: String {
-        let known = coordinator.tracks.compactMap { $0.identity.name }
-        let others = coordinator.tracks.count - known.count
-        return "Camera preview. \(known.isEmpty ? "No known people" : known.joined(separator: ", ")). \(others) other \(others == 1 ? "person" : "people"). Consent \(consentLabel). \(String(format: "%.0f", coordinator.fps)) frames per second."
-    }
-
-    private var footer: some View {
-        List {
-            Section("Status") {
-                Text("\(state.mode.title) · \(state.muted ? "muted" : "unmuted") · \(state.source.title) · \(runtime.people.count) remembered · name guess \(runtime.nameGuess?.name ?? "–")")
-                    .font(.footnote.monospaced())
-                    .accessibilityLabel("Status: \(state.mode.title) mode, \(state.muted ? "muted" : "unmuted"), \(runtime.people.count) people remembered")
-            }
-            Section("Last utterances") {
-                ForEach(coordinator.utterances.suffix(3).reversed()) { e in
-                    HStack {
-                        Text(e.utterance.text).font(.body.weight(.medium))
-                        Spacer()
-                        if let w = e.window { Text(String(format: "%.0f ms", (w.lowerBound - e.at) * 1000)).font(.caption2.monospaced()).foregroundStyle(.secondary) }
-                    }
-                    .accessibilityElement(children: .combine)
-                }
-            }
-            Section("Transcript (last 10 s)") {
+    private var details: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("\(state.mode.title) · \(state.muted ? "muted" : "live") · \(state.source.title) · \(runtime.people.count) remembered · name guess \(runtime.nameGuess?.name ?? "–")")
+                    .font(.familiarMono)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("Status: \(state.mode.title) mode, \(state.muted ? "muted" : "live"), \(runtime.people.count) people remembered")
                 let cutoff = CACurrentMediaTime() - 10
-                ForEach(Array(coordinator.transcript.filter { $0.end >= cutoff }.suffix(4).enumerated()), id: \.offset) { _, seg in
-                    Text("\(seg.speaker == .user ? "you" : seg.speaker == .other ? "other" : "?"): \(seg.text)").font(.footnote)
+                ForEach(Array(coordinator.transcript.filter { $0.end >= cutoff }.suffix(3).enumerated()), id: \.offset) { _, segment in
+                    Text("\(segment.speaker == .user ? "you" : segment.speaker == .other ? "other" : "?"): \(segment.text)")
+                        .font(.familiarBody)
+                }
+                ForEach(coordinator.events.suffix(8).reversed()) { event in
+                    Text(event.text).font(.familiarMono).foregroundStyle(.secondary)
                 }
             }
-            Section("Events") {
-                ForEach(coordinator.events.suffix(12).reversed()) { e in
-                    Text(e.text).font(.caption.monospaced())
-                }
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .glassCard(radius: 18)
         }
-        .listStyle(.plain)
     }
-
-    private var consentLabel: String { ConsentStateLabel.text(runtime.consentState) }
 }
