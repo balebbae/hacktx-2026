@@ -38,6 +38,8 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
     private var loop: Task<Void, Never>?
     private weak var gallery: GalleryProvider?
     private weak var frameSource: FrameSource?
+    /// S7: optional "who is talking to me" detector; set by `Services.make`. Only known, facing tracks are ever candidates.
+    var activeSpeaker: ActiveSpeaker?
 
     private struct State {
         var snapshots: [TrackSnapshot] = []
@@ -194,11 +196,13 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
         // Trajectory verdicts for known tracks (history includes pre-lock observations, so an approach that started
         // before the name locked still fires).
         var snaps: [TrackSnapshot] = []
+        var speakerCandidates: [ActiveSpeaker.Candidate] = []   // S7
         lock.withLock { s in
             for t in tracker.visible(at: now) where t.isConfirmed {
                 let snap = snapshot(for: t, frame: frame, upright: result.uprightSize, now: now)
                 t.lastSnapshot = snap
                 snaps.append(snap)
+                if activeSpeaker != nil, let c = ActiveSpeaker.Candidate(track: t) { speakerCandidates.append(c) }   // S7
                 // Only evaluate once the name is locked; otherwise an approach that happened while the face was still
                 // "someone" would be consumed silently and never spoken.
                 guard t.isKnown else { continue }
@@ -218,6 +222,12 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
             let unknown = tracker.tracks.filter { $0.isConfirmed && !$0.isKnown }.count
             if unknown != s.unknownCount { s.unknownCount = unknown; events.append(.unknownCountChanged(unknown)) }
             s.processed += 1
+        }
+
+        // S7: whisper the name of the known person who started talking to the wearer (once per track-session).
+        if let activeSpeaker, let id = activeSpeaker.evaluate(speakerCandidates, now: now),
+           let snap = snaps.first(where: { $0.trackID == id }), snap.identity.isKnown {
+            events.append(.speakingStarted(snap))
         }
 
         let processed = lock.withLock { $0.processed }
