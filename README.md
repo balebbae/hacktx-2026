@@ -16,13 +16,13 @@ Familiar is one SwiftUI app with no backend. Everything personal (faces, embeddi
 |---|---|---|
 | Sources | `Familiar/Sources` | `GlassesFrameSource`, `PhoneCameraFrameSource` or `VideoFileFrameSource` (fixtures) produce `Frame`s |
 | Perception | `Familiar/Perception` | face detect, track, align, embed, match, bearing and distance, plus `SceneAwareness` for hazards |
-| Audio and speech | `Familiar/Audio`, `Familiar/Speech` | `AudioEngineController` owns the audio session; `Transcriber` keeps a rolling 90 s transcript in RAM; `WakeWord` and `CommandParser` turn speech into `Command`s |
-| Voice | `Familiar/Voice` | `CuePolicy` decides what to say, `CueGate` decides if now is a good time, `Speaker` says it (ElevenLabs, Apple TTS fallback) |
-| Poyo | `Familiar/Voice/PoyoBrain.swift` | scene answers, hazard alerts, follow-ups, renames |
+| Audio and speech | `Familiar/Audio`, `Familiar/Speech` | `AudioEngineController` owns the audio session; `Transcriber` keeps a rolling 90 s transcript in RAM; `WakeWord` (or a volume-button press, push-to-talk) and `CommandParser` turn speech into `Command`s |
+| Voice | `Familiar/Voice` | `CuePolicy` and `NarrationPolicy` decide what to say, `CueGate` decides if now is a good time, `HazardRegistry` keeps one alert per hazard, `VoiceSpeaker` is the one priority queue that says it (streamed ElevenLabs, Apple voice fallback), `DialogueMemory` keeps the last 8 turns |
+| Poyo | `Familiar/Voice/PoyoBrain.swift` | scene answers, follow-ups, contact offers, renames |
 | Memory | `Familiar/Memory` | `JSONPeopleStore` and `ContactsBridge` (iOS contacts, `tel:` and `sms:`) |
 | Flows | `Familiar/Flows` | `ConsentFlow`, `CommandRouter`, `RollCall` |
 | Intelligence | `Familiar/Intelligence` | name extraction, yes/no classification, `VisionLLMClient` |
-| UI | `Familiar/UI` | Readiness, Home, People, Person, Settings, Judge view, consent card |
+| UI | `Familiar/UI` | Readiness, Home, People, Person, Settings, Judge view, consent card, self-enroll |
 
 `Services.make(source:state:)` builds the object graph and `FlowRuntime.bind` wires the flows and Poyo on top of it. Every producer exposes `subscribe() -> AsyncStream<T>`, so modules never hold references to each other's internals. The full set of contracts is in [`Familiar/Core/Contracts.swift`](Familiar/Core/Contracts.swift).
 
@@ -40,13 +40,23 @@ Spatial turns the face box into a clock position from the true field of view (th
 
 `VisionLLMClient` talks to any OpenAI-compatible endpoint and defaults to the Meta Model API with `muse-spark-1.3`. Alongside the redacted JPEG it sends `WorldModel.contextLine`, a short text summary of what the phone already knows: names of consented people in view with clock positions, a count of anyone else, recent hazards and how old the reading is. Names never come back from the cloud.
 
+On device, `SceneAwareness` looks for stairs, walls and obstacles with Vision and watches for the view steadily expanding. `MotionState` decides whether the wearer is walking, and path alerts only play while they are. `ActionCaptioner` adds short captions like two people talking side by side, never what anyone looks like.
+
+### Poyo, one voice
+
+![Poyo's inputs and its single voice](docs/diagrams/poyo.png)
+
+Poyo only answers "Poyo, …", the sentence after a volume-button press, or a quick follow-up to its last answer. It never joins a conversation on its own. Fixed commands (who's here, call, text, mode, mute) go through `CommandRouter`; everything else goes to `PoyoBrain` and the vision model.
+
+Every line, from any of these lanes, goes through one `VoiceSpeaker` queue. Hazards are priority 0 and interrupt. The on-device detector and the vision model share a `HazardRegistry`, so the same stairs are never announced twice. ElevenLabs audio is streamed so the first word comes fast, with the Apple voice as a fallback, and common names and alerts are prewarmed. Each spoken line is a turn in `DialogueMemory`, which the model gets as chat history, so "say that again" and "which side is the door?" work.
+
 ### Remembering someone new
 
 ![Consent flow states](docs/diagrams/consent.png)
 
 The wearer can't add anyone. When Poyo notices a real conversation with an unknown face, it quietly suggests the wearer ask. From there `SpokenConsentFlow` gathers a burst of embeddings, picks up a name from the conversation, and listens for the other person's yes. A tap on the consent card or self-enrollment ("Introduce yourself", or `familiar://introduce`) works too. The LLM never decides consent.
 
-Removing a person deletes the record, thumbnail, consent clip and the iOS contact the app created.
+Poyo can rename someone ("Poyo, change their contact to Anish"), including the iOS contact. Removing a person deletes the record, thumbnail, consent clip and the iOS contact the app created.
 
 ### Privacy rules
 
@@ -58,6 +68,12 @@ These are enforced in code and shown on the Judge view banner. See [AGENTS.md](A
 - Every uploaded frame passes through `FrameRedactor`
 - Audio is limited to the 90 s transcript in RAM and a few-second consent clip
 - No mood reading, no speaking or messaging on the user's behalf
+
+## Demo and branches
+
+[docs/DEMO_TALKING_POINTS.md](docs/DEMO_TALKING_POINTS.md) lists every feature, what we used and why, split by who presents it.
+
+Not on `main` yet: SerpApi quick facts (`feat/quick-facts`), the full UI redesign (`sahas`, `devin/1761388600-ui-remodel`), and the Instagram and Muse samples (`keane`, `samples/muse`, standalone Python).
 
 ## Build and run
 
