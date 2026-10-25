@@ -1,9 +1,80 @@
 import SwiftUI
 import QuartzCore
 
-/// Pure, snapshot-friendly stage: the camera preview, boxes drawn in a Canvas, name pills, and a floating HUD with the
-/// last cues, fps, audio route, consent state and the mic meter. `RoomView` feeds it live values. The HUD rides inside
-/// the clipped stage only while there is room for it (see `showsInlineHUD`); otherwise the host lays it out below.
+/// How sure Familiar is about a box, in the three colors the judge legend uses. Only consenting, enrolled people can be
+/// `sure` or `unsure`; everyone else is a `stranger` and is never named.
+enum JudgeConfidence: CaseIterable {
+    case sure, unsure, stranger
+
+    /// A match this far above the recognition threshold reads as sure; anything between the threshold and that is unsure.
+    static let sureMargin: Float = 0.15
+
+    static func of(_ track: TrackSnapshot, threshold: Float) -> JudgeConfidence {
+        guard track.identity.isKnown, let score = track.identity.score else { return .stranger }
+        return score >= threshold + sureMargin ? .sure : .unsure
+    }
+
+    var color: Color {
+        switch self {
+        case .sure: return Color(familiarHex: "#2FD27A")
+        case .unsure: return Color(familiarHex: "#FFB020")
+        case .stranger: return Color(familiarHex: "#C9CED8")
+        }
+    }
+
+    var word: String {
+        switch self {
+        case .sure: return "Sure"
+        case .unsure: return "Unsure"
+        case .stranger: return "Stranger"
+        }
+    }
+
+    var legend: String {
+        switch self {
+        case .sure: return "Sure match"
+        case .unsure: return "Unsure"
+        case .stranger: return "Stranger"
+        }
+    }
+}
+
+/// What kind of line the wearer just heard, for the caption's color bar and tag.
+enum JudgeCaptionKind {
+    case hazard, person, poyo, other
+
+    init(_ u: Utterance) {
+        switch u.category {
+        case "hazard", "cloudscene": self = .hazard
+        case "agent", "brain", "gist", "scene", "surroundings", "place", "action", "whereis": self = .poyo
+        case "rollcall": self = .person
+        default: self = u.personID != nil ? .person : .other
+        }
+    }
+
+    var tag: String {
+        switch self {
+        case .hazard: return "Hazard"
+        case .person: return "Person"
+        case .poyo: return "Scene"
+        case .other: return "Status"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .hazard: return Color(familiarHex: "#FF5A66")
+        case .person: return JudgeConfidence.sure.color
+        case .poyo: return Color(familiarHex: "#6EB4FF")
+        case .other: return Color(familiarHex: "#E6E9F0")
+        }
+    }
+}
+
+/// Pure, snapshot-friendly stage for judges: the camera preview, confidence-colored boxes with name pills, a color
+/// legend, and subtitles of exactly what the wearer was just told (plus what the mic heard). `RoomView` and
+/// `JudgeModeView` feed it live values. Status chips ride inside the stage only while there is room for them (see
+/// `showsInlineHUD`); otherwise the host lays them out below.
 struct JudgeStageView: View {
     let tracks: [TrackSnapshot]
     let preview: CGImage?
@@ -11,24 +82,37 @@ struct JudgeStageView: View {
     let route: String
     let micLevel: Float
     let consent: String
-    let cues: [String]
+    let captions: [SpokenCue]
+    var heard: [TranscriptSegment] = []
+    var reading: SceneReading? = nil
+    var threshold: Float = 0.40
 
     @Environment(\.visionScale) private var scale
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.colorScheme) private var colorScheme
 
-    /// From the severe profile or accessibility Dynamic Type sizes the HUD would overrun the fixed-aspect stage and be
-    /// cut off, so it moves under the stage. Hosts use the same test to know when to show it themselves.
+    /// A caption stays bright this long after it was spoken, then dims but stays readable until the next one.
+    static let captionFresh: TimeInterval = 8
+    private static let heardFresh: TimeInterval = 6
+    private static let readingFresh: TimeInterval = 10
+    private static let overlayInk = Color.white
+    private static let overlayFill = Color.black.opacity(0.72)
+
+    /// From the severe profile or accessibility Dynamic Type sizes the chips would overrun the fixed-aspect stage, so
+    /// they move under the stage. Hosts use the same test to know when to show them themselves.
     static func showsInlineHUD(scale: VisionScale, dynamicTypeSize: DynamicTypeSize) -> Bool {
         !dynamicTypeSize.isAccessibilitySize && !scale.prefersStackedLayout
     }
 
     private var hudIsInline: Bool { JudgeStageView.showsInlineHUD(scale: scale, dynamicTypeSize: dynamicTypeSize) }
 
+    private var spoken: [SpokenCue] {
+        captions.filter { $0.utterance.audience == .user && !$0.utterance.text.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                FamiliarPalette.canvasSecondary
+                Color.black
                 if let preview {
                     Image(decorative: preview, scale: 1)
                         .resizable()
@@ -39,108 +123,295 @@ struct JudgeStageView: View {
                     noSignal
                 }
                 Canvas { context, size in
-                    for track in tracks {
-                        let rect = self.rect(for: track, in: size)
-                        let known = track.identity.isKnown
-                        let color = known ? FamiliarPalette.mint : FamiliarPalette.inkSecondary(scale)
-                        let path = Path(roundedRect: rect, cornerRadius: 14)
-                        if known { context.fill(path, with: .color(color.opacity(0.12))) }
-                        let width: CGFloat = (known ? 3 : 2) + (scale.highContrast ? 1 : 0)
-                        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: width, dash: known ? [] : [8, 6]))
-                    }
+                    for track in tracks { draw(track, in: size, context: &context) }
                 }
                 .accessibilityHidden(true)
-                ForEach(tracks, id: \.trackID) { (track: TrackSnapshot) in
+                // Known names sit above their box and draw on top; strangers' pills hang below, so a crowd of
+                // unnamed people never hides the one name the wearer was told.
+                ForEach(tracks, id: \.trackID) { track in
                     let rect = self.rect(for: track, in: geo.size)
+                    let named = JudgeConfidence.of(track, threshold: threshold) != .stranger
                     label(for: track)
-                        .offset(x: rect.minX, y: max(8, rect.minY - 30 * scale.textScale))
+                        .offset(x: min(max(4, rect.minX), max(4, geo.size.width - 150)),
+                                y: named ? max(46 * scale.textScale, rect.minY - 30 * scale.textScale) : rect.maxY + 4)
+                        .zIndex(named ? 1 : 0)
                 }
-                if hudIsInline {
-                    VStack {
-                        Spacer()
-                        hud
+                VStack(spacing: 8) {
+                    topBar
+                    Spacer(minLength: 0)
+                    TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                        let now = CACurrentMediaTime()
+                        VStack(alignment: .leading, spacing: 8) {
+                            pathMarker(now: now, width: geo.size.width - 24)
+                            heardLine(now: now)
+                            caption(now: now)
+                        }
                     }
-                    .padding(12)
                 }
+                .padding(12)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(description)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    // MARK: Boxes
+
+    private func draw(_ track: TrackSnapshot, in size: CGSize, context: inout GraphicsContext) {
+        let rect = self.rect(for: track, in: size)
+        let band = JudgeConfidence.of(track, threshold: threshold)
+        let color = band.color
+        let path = Path(roundedRect: rect, cornerRadius: 10)
+        let boost: CGFloat = scale.highContrast ? 1 : 0
+        if band != .stranger { context.fill(path, with: .color(color.opacity(0.14))) }
+        context.stroke(path, with: .color(.black.opacity(0.55)), lineWidth: 5 + boost)
+        context.stroke(path, with: .color(color),
+                       style: StrokeStyle(lineWidth: 2.5 + boost, dash: band == .stranger ? [8, 6] : []))
+        // Heavy corner brackets so the box still reads on a busy frame or a projector.
+        let arm = min(22, rect.width / 3, rect.height / 3)
+        var corners = Path()
+        for (p, dx, dy) in [(CGPoint(x: rect.minX, y: rect.minY), 1.0, 1.0), (CGPoint(x: rect.maxX, y: rect.minY), -1.0, 1.0),
+                            (CGPoint(x: rect.minX, y: rect.maxY), 1.0, -1.0), (CGPoint(x: rect.maxX, y: rect.maxY), -1.0, -1.0)] {
+            corners.move(to: CGPoint(x: p.x + dx * arm, y: p.y))
+            corners.addLine(to: p)
+            corners.addLine(to: CGPoint(x: p.x, y: p.y + dy * arm))
+        }
+        context.stroke(corners, with: .color(color), style: StrokeStyle(lineWidth: 5 + boost, lineCap: .round, lineJoin: .round))
     }
 
     private func rect(for track: TrackSnapshot, in size: CGSize) -> CGRect {
-        CGRect(x: track.faceBox.minX * size.width,
-               y: track.faceBox.minY * size.height,
-               width: track.faceBox.width * size.width,
-               height: track.faceBox.height * size.height)
+        // The preview is drawn aspect-fill, so map through the same scale and crop or the boxes drift off the faces.
+        var shown = CGRect(origin: .zero, size: size)
+        if let preview, preview.width > 0, preview.height > 0 {
+            let iw = CGFloat(preview.width), ih = CGFloat(preview.height)
+            let fill = max(size.width / iw, size.height / ih)
+            shown = CGRect(x: (size.width - iw * fill) / 2, y: (size.height - ih * fill) / 2, width: iw * fill, height: ih * fill)
+        }
+        let b = track.faceBox
+        let face = CGRect(x: shown.minX + b.minX * shown.width, y: shown.minY + b.minY * shown.height,
+                          width: b.width * shown.width, height: b.height * shown.height)
+        // A little margin, and never smaller than a fingertip, so far-away faces still get a visible box.
+        let side = max(30, max(face.width, face.height) * 1.2)
+        let grow = CGSize(width: max(0, side - face.width) / 2, height: max(0, side * 1.15 - face.height) / 2)
+        return face.insetBy(dx: -grow.width, dy: -grow.height)
     }
 
     private func label(for track: TrackSnapshot) -> some View {
-        let known = track.identity.isKnown
-        let score = track.identity.score.map { String(format: "%.2f", $0) }
+        let band = JudgeConfidence.of(track, threshold: threshold)
+        let name = band == .stranger ? "Person" : (track.identity.name ?? "Person")
         return HStack(spacing: 6) {
-            Text(known ? (track.identity.name ?? "") : "person").font(FamiliarType.micro(scale))
-            if let score { Text(score).font(FamiliarType.mono(scale)) }
+            Text(name).font(FamiliarType.micro(scale).weight(.bold))
+            if band != .stranger, let score = track.identity.score {
+                Text("\(band.word) \(String(format: "%.2f", score))").font(FamiliarType.mono(scale))
+            }
             Text(track.distance.words).font(FamiliarType.micro(scale))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 5)
-        .background(known ? FamiliarPalette.mint(scale) : FamiliarPalette.surface(scale), in: Capsule())
-        .overlay(Capsule().strokeBorder(known ? Color.clear : FamiliarPalette.stroke(scale), lineWidth: scale.highContrast ? 2 : 1))
-        .foregroundStyle(known ? knownLabelInk : FamiliarPalette.ink(scale))
+        .background(band.color, in: Capsule())
+        .foregroundStyle(Color(familiarHex: "#0B1220"))
         .fixedSize()
     }
 
-    /// The letter colour `Monogram` uses on the same pigment: fixed navy on mint in both appearances (9.5:1; the
-    /// dynamic ink would be near-white on mint in dark mode), white only on the deep teal of light high contrast.
-    private var knownLabelInk: Color {
-        scale.highContrast && colorScheme == .light ? Color.white : Color(familiarHex: "#172236")
+    // MARK: Overlays
+
+    private var topBar: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { legend; Spacer(minLength: 0); liveBadge }
+            VStack(alignment: .leading, spacing: 6) { legend; liveBadge }
+        }
     }
 
-    private var hud: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CueTicker(cues: cues)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    chips
-                    Spacer(minLength: 0)
-                    MicMeter(level: micLevel)
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    chips
-                    MicMeter(level: micLevel)
+    private var legend: some View {
+        HStack(spacing: 10) {
+            ForEach(JudgeConfidence.allCases, id: \.self) { band in
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 3).strokeBorder(band.color, lineWidth: 3).frame(width: 14, height: 14)
+                    Text(band.legend).font(FamiliarType.micro(scale)).lineLimit(1)
                 }
             }
         }
-        .padding(14)
-        .background(FamiliarPalette.surface(scale).opacity(scale.highContrast ? 1 : 0.92),
-                    in: RoundedRectangle(cornerRadius: FamiliarPalette.controlRadius, style: .continuous))
+        .foregroundStyle(Self.overlayInk)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Self.overlayFill, in: Capsule())
     }
 
-    @ViewBuilder private var chips: some View {
-        StatusChip(text: String(format: "%.0f fps", fps), systemImage: "speedometer")
-        StatusChip(text: route, systemImage: "headphones")
-        StatusChip(text: consent, systemImage: "hand.raised", tint: FamiliarPalette.ocean)
+    @ViewBuilder private var liveBadge: some View {
+        if hudIsInline {
+            HStack(spacing: 6) {
+                Circle().fill(preview == nil ? Color.gray : JudgeCaptionKind.hazard.color).frame(width: 8, height: 8)
+                Text(preview == nil ? "No video" : String(format: "LIVE %.0f fps", fps)).font(FamiliarType.mono(scale))
+                Rectangle().fill(.white.opacity(0.35)).frame(width: 1, height: 12)
+                Text("consent \(consent)").font(FamiliarType.mono(scale)).lineLimit(1)
+            }
+            .foregroundStyle(Self.overlayInk)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Self.overlayFill, in: Capsule())
+        }
+    }
+
+    /// Subtitle of the last line the wearer actually heard, color-coded by kind.
+    @ViewBuilder private func caption(now: TimeInterval) -> some View {
+        let last = spoken.last
+        let fresh = last.map { now - $0.at < Self.captionFresh } ?? false
+        let kind = last.map { JudgeCaptionKind($0.utterance) } ?? .other
+        HStack(alignment: .top, spacing: 10) {
+            RoundedRectangle(cornerRadius: 2).fill(last == nil ? Color.gray : kind.color).frame(width: 5)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "speaker.wave.2.fill")
+                    Text(last == nil ? "Wearer hears" : "Wearer hears · \(kind.tag)")
+                    if let last { Text(Self.ago(now - last.at)).foregroundStyle(.white.opacity(0.6)) }
+                }
+                .font(FamiliarType.micro(scale).weight(.semibold))
+                .foregroundStyle(last == nil ? Color.gray : kind.color)
+                Text(last.map { "\u{201C}\($0.utterance.text)\u{201D}" } ?? "Nothing yet. Familiar stays quiet until something matters.")
+                    .font(FamiliarType.companion(scale).weight(.semibold))
+                    .foregroundStyle(Self.overlayInk.opacity(last == nil ? 0.7 : 1))
+                    .lineLimit(3)
+                    .minimumScaleFactor(0.8)
+                    .contentTransition(.opacity)
+                    .id(last?.id)
+            }
+            Spacer(minLength: 0)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(12)
+        .background(Color.black.opacity(fresh ? 0.8 : 0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(fresh ? kind.color.opacity(0.9) : .clear, lineWidth: 2))
+        .opacity(fresh || last == nil ? 1 : 0.75)
+        .animation(.easeOut(duration: 0.25), value: last?.id)
+    }
+
+    /// The mic's last few seconds, so a judge can see Familiar waits for gaps and hears the other person's "yes".
+    @ViewBuilder private func heardLine(now: TimeInterval) -> some View {
+        if let seg = heard.last(where: { now - $0.end < Self.heardFresh && !$0.text.isEmpty }) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform")
+                Text(seg.speaker == .user ? "Wearer said" : "Mic heard")
+                    .fontWeight(.semibold)
+                Text(seg.text).lineLimit(1).truncationMode(.head)
+                MicMeter(level: micLevel).frame(maxWidth: 60)
+            }
+            .font(FamiliarType.micro(scale))
+            .foregroundStyle(Self.overlayInk.opacity(0.9))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Self.overlayFill, in: Capsule())
+        }
+    }
+
+    /// Where the walking path sits in the frame and whether it is clear, from the latest scene reading.
+    @ViewBuilder private func pathMarker(now: TimeInterval, width: CGFloat) -> some View {
+        if let r = reading, now - r.at < Self.readingFresh {
+            let color: Color = r.path == .clear ? JudgeConfidence.sure.color : r.path == .caution ? JudgeConfidence.unsure.color : JudgeCaptionKind.hazard.color
+            let text = [r.path == .clear ? "Path clear" : "Path \(r.path.rawValue)", r.pathWhat, r.pathMeters.map { String(format: "%.1f m", $0) }]
+                .compactMap { $0 }.joined(separator: " · ")
+            Label(text, systemImage: r.path == .clear ? "figure.walk" : "exclamationmark.triangle.fill")
+                .font(FamiliarType.micro(scale).weight(.semibold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(color, in: Capsule())
+                .foregroundStyle(Color(familiarHex: "#0B1220"))
+                .fixedSize()
+                .offset(x: max(0, min(width - 180, CGFloat(r.pathX) * width - 90)))
+        }
+    }
+
+    static func ago(_ seconds: TimeInterval) -> String {
+        seconds < 2 ? "now" : seconds < 60 ? "\(Int(seconds))s ago" : "\(Int(seconds / 60))m ago"
     }
 
     private var noSignal: some View {
         VStack(spacing: 8) {
             Image(systemName: "eyeglasses")
                 .visionIcon(scale, base: 40)
-                .foregroundStyle(FamiliarPalette.inkSecondary(scale))
             Text("Waiting for frames")
                 .font(FamiliarType.supporting(scale))
-                .foregroundStyle(FamiliarPalette.inkSecondary(scale))
         }
+        .foregroundStyle(.white.opacity(0.6))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var description: String {
-        let known = tracks.compactMap { $0.identity.name }
-        let others = tracks.count - known.count
-        let people = "\(known.isEmpty ? "No known people" : known.joined(separator: ", ")). \(others) other \(others == 1 ? "person" : "people")."
+        let boxes = tracks.map { t -> String in
+            let band = JudgeConfidence.of(t, threshold: threshold)
+            return band == .stranger ? "a person, \(t.distance.words)" : "\(t.identity.name ?? "a person"), \(band.word.lowercased()), \(t.distance.words)"
+        }
+        let people = boxes.isEmpty ? "No one in view." : "In view: \(boxes.joined(separator: "; "))."
         let status = "Consent \(consent). \(String(format: "%.0f", fps)) frames per second."
-        return "Camera view. \(people) \(status) Last cue: \(cues.last ?? "none yet")."
+        return "Camera view. \(people) \(status) Wearer last heard: \(spoken.last?.utterance.text ?? "nothing yet")."
+    }
+}
+
+/// Full-screen judge presentation: the stage as big as the phone allows, then the running log of everything said to
+/// the wearer, color-coded, so someone at the table can follow along without hearing the glasses.
+struct JudgeModeView: View {
+    @EnvironmentObject var state: AppState
+    @EnvironmentObject var coordinator: AppCoordinator
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.visionScale) private var scale
+    let route: String
+    let consent: String
+    let micLevel: Float
+    let threshold: Float
+
+    private var tracks: [TrackSnapshot] { coordinator.isReady ? coordinator.tracks : [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("What Familiar sees and says").font(FamiliarType.title(scale))
+                    Text("Boxes show confidence. Captions are exactly what the wearer hears.")
+                        .font(FamiliarType.supporting(scale)).foregroundStyle(.white.opacity(0.7))
+                }
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark").font(.headline).frame(width: 44, height: 44)
+                        .background(.white.opacity(0.15), in: Circle())
+                }
+                .accessibilityLabel("Close judge view")
+            }
+            JudgeStageView(tracks: tracks, preview: coordinator.preview, fps: coordinator.fps, route: route,
+                           micLevel: micLevel, consent: consent, captions: state.spokenCues,
+                           heard: coordinator.transcript, reading: coordinator.sceneReading, threshold: threshold)
+                .aspectRatio(3 / 4, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Said to the wearer").font(FamiliarType.micro(scale).weight(.semibold)).foregroundStyle(.white.opacity(0.7))
+            TimelineView(.periodic(from: .now, by: 1)) { _ in
+                let now = CACurrentMediaTime()
+                VStack(alignment: .leading, spacing: 8) {
+                    let log = Array(state.spokenCues.filter { $0.utterance.audience == .user && !$0.utterance.text.isEmpty }
+                        .suffix(4).reversed())
+                    if log.isEmpty {
+                        Text("Nothing yet.").font(FamiliarType.supporting(scale)).foregroundStyle(.white.opacity(0.6))
+                    }
+                    ForEach(Array(log.enumerated()), id: \.offset) { (i: Int, cue: SpokenCue) in
+                        let kind = JudgeCaptionKind(cue.utterance)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(kind.tag.uppercased()).font(FamiliarType.mono(scale)).foregroundStyle(kind.color)
+                                .frame(width: 64, alignment: .leading)
+                            Text(cue.utterance.text).font(i == 0 ? FamiliarType.body(scale) : FamiliarType.supporting(scale))
+                                .foregroundStyle(.white.opacity(i == 0 ? 1 : 0.7))
+                            Spacer(minLength: 0)
+                            Text(JudgeStageView.ago(now - cue.at)).font(FamiliarType.mono(scale)).foregroundStyle(.white.opacity(0.5))
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+            Text(JudgeView.banner).font(FamiliarType.micro(scale)).foregroundStyle(.white.opacity(0.6))
+        }
+        .padding(16)
+        .foregroundStyle(.white)
+        .background(Color(familiarHex: "#05070C").ignoresSafeArea())
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -155,6 +426,7 @@ struct RoomView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(YouSettings.mimoPresence) private var mimoPresence = MimoPresence.full.rawValue
     @State private var showDiagnostics = false
+    @State private var showJudgeMode = false
     /// A Details tap on a card pushes that person (same `PersonSelection` payload as the People tab).
     @State private var selection: PersonSelection?
     /// The start-up skeleton (`skeletonReveal`) shows only between the pipeline starting and its first frame, and
@@ -182,6 +454,7 @@ struct RoomView: View {
                 .skeletonReveal(isLoaded: !startingUp)
                 sayItButton
                 stage
+                judgeModeButton
                 PrivacyBanner(text: JudgeView.banner)
                 diagnostics
             }
@@ -191,6 +464,11 @@ struct RoomView: View {
         .familiarCanvas()
         .navigationTitle("Room")   // hidden here; names the Back button on a pushed person
         .toolbar(.hidden, for: .navigationBar)
+        .fullScreenCover(isPresented: $showJudgeMode) {
+            JudgeModeView(route: routeTitle, consent: consentText, micLevel: micLevel, threshold: matchThreshold)
+                .environmentObject(state)
+                .environmentObject(coordinator)
+        }
         .navigationDestination(item: $selection) { (sel: PersonSelection) in
             PersonDetailView(person: sel.person)
         }
@@ -275,6 +553,16 @@ struct RoomView: View {
         .accessibilitySortPriority(scale.spokenFirst ? 10 : 0)
     }
 
+    private var judgeModeButton: some View {
+        Button { showJudgeMode = true } label: {
+            Label("Open judge view", systemImage: "rectangle.expand.vertical")
+        }
+        .buttonStyle(GhostPillStyle())
+        .accessibilityHint("Shows the camera full screen with confidence boxes and captions of what the wearer hears")
+    }
+
+    private var matchThreshold: Float { UserDefaults.standard.object(forKey: UserSettings.matchThreshold) as? Float ?? 0.40 }
+
     private var sayItButton: some View {
         Button { whoIsHere() } label: {
             Label("Say who's here", systemImage: "speaker.wave.2")
@@ -290,7 +578,10 @@ struct RoomView: View {
                        route: routeTitle,
                        micLevel: micLevel,
                        consent: consentText,
-                       cues: recentCues)
+                       captions: state.spokenCues,
+                       heard: coordinator.transcript,
+                       reading: coordinator.sceneReading,
+                       threshold: matchThreshold)
             .aspectRatio(4 / 5, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: FamiliarPalette.cardRadius, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: FamiliarPalette.cardRadius, style: .continuous)
@@ -476,7 +767,11 @@ struct JudgeView: View {
 #Preview("Camera stage") {
     JudgeStageView(tracks: RoomRadarView.sampleTracks, preview: nil, fps: 24,
                    route: "phone mic + glasses", micLevel: 0.6, consent: "idle",
-                   cues: ["Normal mode.", "Three people.", "Marcus, ahead, close."])
+                   captions: ["Normal mode.", "Three people.", "Marcus, ahead, close."].enumerated().map {
+                       SpokenCue(utterance: Utterance(text: $0.element, priority: 2, category: "preview", personID: nil,
+                                                      dedupeKey: nil, audience: .user, earcon: false),
+                                 at: CACurrentMediaTime() - Double(2 - $0.offset))
+                   })
         .aspectRatio(4 / 5, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: FamiliarPalette.cardRadius, style: .continuous))
         .padding(FamiliarPalette.margin)

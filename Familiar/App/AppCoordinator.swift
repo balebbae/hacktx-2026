@@ -77,7 +77,9 @@ final class AppCoordinator: ObservableObject {
         // Alerts must play the moment they are decided: fill the TTS cache for them once (kept on disk).
         tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.alertPhrases + Phrasebook.actionAlertPhrases) })
         if let voice = s.speaker as? VoiceSpeaker {
-            voice.onSpoken = { DiagnosticLog.write("said[p\($0.utterance.priority) \($0.utterance.category)\($0.source == "apple" ? " apple" : "")] \($0.utterance.text)") }
+            // Chain onto whatever is already listening: the tab view mirrors spoken lines into Room captions and toasts.
+            let mirrored = voice.onSpoken
+            voice.onSpoken = { mirrored?($0); DiagnosticLog.write("said[p\($0.utterance.priority) \($0.utterance.category)\($0.source == "apple" ? " apple" : "")] \($0.utterance.text)") }
             voice.onDropped = { u, why in DiagnosticLog.write("dropped[\(u.category)] \(why): \(u.text)") }
         }
         tasks.append(Task { [weak self] in
