@@ -21,4 +21,6 @@ enum Secrets {
     static var modalEmbedURL: URL? { value("MODAL_EMBED_URL").flatMap(URL.init(string:)) }
     static var modalKey: String? { value("MODAL_KEY") }
     static var modalSecret: String? { value("MODAL_SECRET") }
+    /// SerpApi key for quick facts (Google search, text only); unset = "Search isn't set up."
+    static var serpApiKey: String? { value("SERPAPI_KEY") }
 }

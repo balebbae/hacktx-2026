@@ -1,87 +1,189 @@
 import SwiftUI
 
+/// Voice and cues: the same settings and UserDefaults keys as before, laid out on the canvas as white sections.
+/// Removing everyone lives in the privacy dashboard (one confirmation that names the count); this screen links to it.
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var runtime: FlowRuntime
     @EnvironmentObject var coordinator: AppCoordinator
+    @Environment(\.visionScale) private var scale
     @AppStorage(UserSettings.voiceProvider) private var voiceProvider = "elevenlabs"
     @AppStorage(UserSettings.matchThreshold) private var matchThreshold = 0.40
     @AppStorage(UserSettings.audioRoute) private var audioRoute = "auto"
     @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
+    /// Default on: the cue policy has always said "Marcus." when a known person starts talking (`SpeechPreferences`).
+    @AppStorage(SpeechPreferences.speakingCueKey) private var cueSpeaking = true
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
     @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
     @AppStorage(UserSettings.streamingTTS) private var streamingTTS = true
-    @State private var confirmReset = false
     @State private var calibrating = false
     @State private var calibration: String?
 
+    private static let voiceOptions: [(String, String)] = [("elevenlabs", "ElevenLabs"), ("apple", "Apple")]
+    /// "pauseCues" is the fixed mute action spec 20.4 asks for; `MainTabView` handles all three.
+    private static let volumeOptions: [(String, String)] = [("askPoyo", "Ask Poyo"), ("whoIsHere", "Who's here"), ("rememberThem", "Remember"), ("pauseCues", "Pause")]
+
     var body: some View {
-        Form {
-            Section("You") {
-                TextField("Your name", text: $state.userName).accessibilityHint("Said in the consent question")
-                TextField("Place name (optional)", text: $state.placeName).accessibilityHint("Overrides the location name saved with each person")
-                Button { calibrate() } label: { Label(calibrating ? "Listening… keep talking" : "Calibrate my voice", systemImage: "waveform") }
-                    .disabled(calibrating || coordinator.services?.vad == nil)
-                    .accessibilityHint("Talk normally for three seconds so the app can tell your voice from other people's")
-                if let calibration { Text(calibration).font(.footnote).foregroundStyle(.secondary) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                intro
+                youSection
+                voiceSection
+                assistantSection
+                recognitionSection
+                cuesSection
+                keysSection
+                PrivacyBanner(text: JudgeView.banner)
+                privacySection
             }
-            Section("Voice") {
-                Picker("Voice", selection: $voiceProvider) {
-                    Text("ElevenLabs").tag("elevenlabs"); Text("Apple").tag("apple")
-                }
-                .accessibilityHint("ElevenLabs falls back to the Apple voice when slow")
-                Toggle("Stream speech (faster)", isOn: $streamingTTS)
-                    .accessibilityHint("Plays each answer as it is synthesized instead of waiting for the whole clip. Turn off if speech stutters.")
-                    .onChange(of: streamingTTS) { _, on in (coordinator.services?.speaker as? VoiceSpeaker)?.streaming = on }
-                Picker("Audio route", selection: $audioRoute) {
-                    Text("Automatic").tag("auto"); Text("Phone mic + glasses").tag("phoneMicGlassesA2DP"); Text("Glasses HFP").tag("glassesHFP"); Text("Phone only").tag("phoneOnly")
-                }
-                .accessibilityHint("Where the microphone and speaker are. Glasses HFP stops the glasses camera.")
-                .onChange(of: audioRoute) { _, _ in Task { await coordinator.restart(source: state.source) } }
+            .padding(.horizontal, FamiliarPalette.margin)
+            .padding(.vertical, 12)
+        }
+        .familiarCanvas()
+        .youNavigationTitle("Voice and cues")
+    }
+
+    // MARK: - Sections
+
+    private var intro: some View {
+        Text("How Familiar speaks, what it says, and how sure it has to be before it says a name.")
+            .font(FamiliarType.supporting(scale))
+            .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+            .padding(.horizontal, 4)
+    }
+
+    private var youSection: some View {
+        YouSection(title: "You") {
+            YouTextFieldRow(title: "Your name", text: $state.userName, placeholder: "Add your name", hint: "Said in the consent question")
+            YouDivider(inset: YouMetrics.plainInset)
+            YouTextFieldRow(title: "Place name", text: $state.placeName, placeholder: "Optional", hint: "Overrides the location name saved with each person")
+            YouDivider()
+            YouActionRow(title: calibrating ? "Listening… keep talking" : "Calibrate my voice",
+                         systemImage: "waveform",
+                         detail: calibration ?? "Talk normally for three seconds so Familiar can tell your voice from other people's",
+                         hint: "Talk normally for three seconds so the app can tell your voice from other people's") { calibrate() }
+                .disabled(calibrating || coordinator.services?.vad == nil)
+        }
+    }
+
+    private var voiceSection: some View {
+        YouSection(title: "Voice") {
+            YouChoiceRow(title: "Voice", detail: "Which voice speaks the cues. ElevenLabs falls back to the Apple voice when slow") {
+                SlidingPillSegment(options: Self.voiceOptions, selection: $voiceProvider, label: "Voice")
+            }
+            YouDivider(inset: YouMetrics.plainInset)
+            YouToggleRow(title: "Stream speech (faster)", detail: "Plays each answer as it is synthesized. Turn off if speech stutters",
+                         isOn: $streamingTTS, hint: "Plays each answer as it is synthesized instead of waiting for the whole clip")
+                .onChange(of: streamingTTS) { _, on in (coordinator.services?.speaker as? VoiceSpeaker)?.streaming = on }
+            YouDivider(inset: YouMetrics.plainInset)
+            YouChoiceRow(title: "Audio route", detail: "Where the microphone and speaker are. Glasses HFP stops the glasses camera") {
+                audioRoutePicker
+            }
+            YouDivider(inset: YouMetrics.plainInset)
+            YouChoiceRow(title: "Volume button", detail: "What a press of a volume button triggers. Ask Poyo: click, then talk") {
                 Picker("Volume button", selection: $volumePrimary) {
-                    Text("Ask Poyo (click, then talk)").tag("askPoyo"); Text("Who's here?").tag("whoIsHere"); Text("Remember them").tag("rememberThem")
+                    ForEach(Self.volumeOptions, id: \.0) { Text($0.1).tag($0.0) }
                 }
-                .accessibilityHint("What a volume button press triggers")
-                Toggle("Speak cues aloud (Simulator)", isOn: $state.speakLogSpeakerAloud)
-                    .accessibilityHint("Uses the Apple voice for the logged speaker")
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(FamiliarPalette.ink(scale))
+                .font(FamiliarType.body(scale))
+                .frame(minHeight: scale.hitTarget, alignment: .leading)
+                .accessibilityHint("What a press of a volume button triggers")
             }
-            Section("Assistant") {
-                Picker("Poyo runs on", selection: $assistantBrain) {
-                    Text("Vision model (sees the view)").tag("vision"); Text("ElevenLabs agent (text only)").tag("elevenlabs")
-                }
-                .accessibilityHint("The vision model gets camera frames with every face blacked out. The ElevenLabs agent gets text only.")
-                .onChange(of: assistantBrain) { _, _ in Task { await coordinator.restart(source: state.source) } }
-            }
-            Section("Recognition") {
-                VStack(alignment: .leading) {
-                    Text("Match threshold \(matchThreshold, specifier: "%.2f")")
-                    Slider(value: $matchThreshold, in: 0.25...0.60, step: 0.01)
-                        .accessibilityLabel("Match threshold")
-                        .accessibilityValue(String(format: "%.2f", matchThreshold))
-                        .accessibilityHint("Higher means fewer false names")
-                }
-            }
-            Section("Keys") {
-                row("ElevenLabs key", Secrets.elevenLabsAPIKey != nil)
-                row("ElevenLabs agent", Secrets.elevenLabsAgentID != nil)
-                row("Meta Model API key", Secrets.metaModelAPIKey != nil)
-                row("Vision model", coordinator.services?.cloudScene.isConfigured ?? false)
-                row("Modal endpoint", Secrets.modalEmbedURL != nil)
-                LabeledContent("Name extractor", value: runtime.metaClient == nil ? "regex" : "regex → Apple → Meta")
-            }
-            Section("Privacy") {
-                Text(JudgeView.banner).font(.footnote)
-                Text("Removing a person deletes their record, thumbnail, consent clip and the contact this app created.").font(.footnote).foregroundStyle(.secondary)
-                Button(role: .destructive) { confirmReset = true } label: { Label("Remove everyone", systemImage: "trash") }
-                    .accessibilityHint("Deletes every remembered person and their files")
-                Button("Show readiness check again") { readinessDone = false }
-                    .accessibilityHint("The checklist appears next time you open the home screen")
+            YouDivider(inset: YouMetrics.plainInset)
+            YouToggleRow(title: "Speak cues aloud (Simulator)",
+                         detail: "Uses the Apple voice for the logged speaker",
+                         systemImage: "speaker.wave.2",
+                         isOn: $state.speakLogSpeakerAloud)
+        }
+    }
+
+    private static let brainOptions: [(String, String)] = [("vision", "Vision model"), ("elevenlabs", "ElevenLabs agent")]
+
+    private var assistantSection: some View {
+        YouSection(title: "Assistant",
+                   footer: "The vision model gets camera frames with every face blacked out. The ElevenLabs agent gets text only.") {
+            YouChoiceRow(title: "Poyo runs on", detail: "Vision model sees the view. ElevenLabs agent is text only") {
+                SlidingPillSegment(options: Self.brainOptions, selection: $assistantBrain, label: "Poyo runs on")
             }
         }
-        .navigationTitle("Settings")
-        .confirmationDialog("Remove everyone?", isPresented: $confirmReset, titleVisibility: .visible) {
-            Button("Remove everyone", role: .destructive) { runtime.resetPeople() }
-            Button("Keep", role: .cancel) {}
+        .onChange(of: assistantBrain) { _, _ in Task { await coordinator.restart(source: state.source) } }
+    }
+
+    private var audioRoutePicker: some View {
+        Picker("Audio route", selection: $audioRoute) {
+            Text("Automatic").tag("auto")
+            Text("Phone mic + glasses").tag("phoneMicGlassesA2DP")
+            Text("Glasses HFP").tag("glassesHFP")
+            Text("Phone only").tag("phoneOnly")
+        }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .tint(FamiliarPalette.ink(scale))
+        .font(FamiliarType.body(scale))
+        .frame(minHeight: scale.hitTarget, alignment: .leading)
+        .accessibilityHint("Where the microphone and speaker are. Glasses HFP stops the glasses camera.")
+        .onChange(of: audioRoute) { _, _ in Task { await coordinator.restart(source: state.source) } }
+    }
+
+    private var recognitionSection: some View {
+        YouSection(title: "Recognition", footer: "Mistaken identity is worse than no identity. When unsure, Familiar says \"someone\".") {
+            YouSliderRow(title: "Match threshold",
+                         value: $matchThreshold,
+                         range: 0.25...0.60,
+                         step: 0.01,
+                         minimumLabel: "More names",
+                         maximumLabel: "Fewer mistakes",
+                         hint: "Higher means fewer false names")
+        }
+    }
+
+    /// "Speaking first" is read by the cue policy on every event. Presence, approach and leaving are always on.
+    private var cuesSection: some View {
+        YouSection(title: "Cues", footer: "Presence, approach and leaving are always on. Hazards are said at once, even when paused.") {
+            YouToggleRow(title: "Speaking first",
+                         detail: "Says a known person's name, softly, when they start talking",
+                         systemImage: "mouth",
+                         isOn: $cueSpeaking,
+                         hint: "Applies to the next person who starts talking")
+        }
+    }
+
+    private var keysSection: some View {
+        YouSection(title: "Keys", footer: "Keys come from Secrets.xcconfig. Nothing is typed in here.") {
+            keyRow("ElevenLabs key", Secrets.elevenLabsAPIKey != nil)
+            YouDivider()
+            keyRow("ElevenLabs agent", Secrets.elevenLabsAgentID != nil)
+            YouDivider()
+            keyRow("Meta Model API key", Secrets.metaModelAPIKey != nil)
+            YouDivider()
+            keyRow("Vision model", coordinator.services?.cloudScene.isConfigured ?? false)
+            YouDivider()
+            keyRow("Modal endpoint", Secrets.modalEmbedURL != nil)
+            YouDivider()
+            YouValueRow(title: "Name extractor",
+                        value: runtime.metaClient == nil ? "regex" : "regex → Apple → Meta",
+                        systemImage: "text.magnifyingglass")
+        }
+    }
+
+    private var privacySection: some View {
+        YouSection(title: "Privacy", footer: "Removing a person deletes their record, thumbnail, consent clip and the contact this app created.") {
+            NavigationLink {
+                PrivacyDashboardView()
+            } label: {
+                YouRow(title: "Privacy",
+                       systemImage: "lock.shield",
+                       detail: "Your people. Your control. \(YouCopy.people(runtime.people.count)) remembered")
+            }
+            .buttonStyle(YouRowButtonStyle())
+            .accessibilityHint("Opens the privacy dashboard, where everyone can be removed")
+            YouDivider()
+            YouActionRow(title: "Show readiness check again",
+                         systemImage: "checklist",
+                         detail: "The checklist appears next time you open the home screen",
+                         hint: "Resets the first-launch checklist") { readinessDone = false }
         }
     }
 
@@ -100,8 +202,19 @@ struct SettingsView: View {
         }
     }
 
-    private func row(_ title: String, _ ok: Bool) -> some View {
-        HStack { Text(title); Spacer(); Label(ok ? "present" : "missing", systemImage: ok ? "checkmark.circle" : "xmark.circle").foregroundStyle(ok ? .green : .secondary) }
-            .accessibilityElement(children: .combine)
+    private func keyRow(_ title: String, _ ok: Bool) -> some View {
+        YouValueRow(title: title,
+                    value: ok ? "present" : "missing",
+                    systemImage: ok ? "checkmark.circle" : "xmark.circle",
+                    tint: ok ? FamiliarPalette.success : FamiliarPalette.inkSecondary(scale))
+    }
+}
+
+#Preview("Voice and cues") {
+    NavigationStack {
+        SettingsView()
+            .environmentObject(AppState())
+            .environmentObject(FlowRuntime())
+            .environmentObject(AppCoordinator())
     }
 }

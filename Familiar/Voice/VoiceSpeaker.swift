@@ -32,6 +32,9 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
     /// Fires for every utterance that reached playback (the judge view's utterance log).
     var onSpoken: ((Spoken) -> Void)?
     var onDropped: ((Utterance, String) -> Void)?
+    /// The wearer's volume preference as a 0…1 gain, read per utterance (`VoiceFactory` wires `SpeechPreferences`).
+    /// nil, the default for speakers built directly (tests), means unity.
+    var volumeProvider: (() -> Float)?
 
     private struct Job {
         let id = UUID()
@@ -137,7 +140,8 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
                 if !isCurrent(job) { return nil }
             }
         }
-        let gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
+        var gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
+        if let volumeProvider { gain *= min(1, max(0, volumeProvider())) }   // the wearer's volume preference
         func prefix(for sampleRate: Double) -> [Float] {
             var p = [Float](repeating: 0, count: Int(((isBluetoothOutput?() ?? true) ? leadingSilence : 0) * sampleRate))
             if u.earcon { p += Earcon.prefix(for: sampleRate) }

@@ -47,6 +47,9 @@ extension Phrasebook {
     Context updates say who is visible, what is around and what other people said; never reply to them. \
     Use the client tools for anything about the room: who_is_here, where_is(name), describe_surroundings, remember_them, \
     set_mode(mode), call_person(name), text_person(name), mute. Repeat tool results almost verbatim. \
+    When the wearer asks about something you cannot know (a team, a game, a score, an event, a place, a word, a product, \
+    the weather), call quick_fact(query) with a short search query built from what they said or heard; never put a \
+    person's name in it. \
     Only these people may be named: {{known_names}}. Never name, describe or guess anyone else, even if you heard \
     their name; say someone. Never talk about faces or photos. Never agree to remember anyone yourself: only the \
     remember_them tool can, and the other person must say yes to it. Your name is Poyo, but never say it. \
@@ -337,6 +340,7 @@ final class SimulatedAgentConversation: AgentConversation {
         var params: [String: Any] = [:]
         if let n = Self.nameArgument(in: body) { params["name"] = n }
         let name = Self.toolName(for: body)
+        if name == "quick_fact" { params["query"] = QuickFacts.cleanQuery(body) ?? body }
         if name == "set_mode", let m = ["quiet", "normal", "chatty"].first(where: { body.lowercased().contains($0) }) { params["mode"] = m }
         delegate?.conversationToolCall(AgentToolCall(id: "sim-\(messages.count)", name: name, parameters: params))
     }
@@ -354,8 +358,10 @@ final class SimulatedAgentConversation: AgentConversation {
         if t.contains("mode") { return "set_mode" }
         if t.contains("call ") { return "call_person" }
         if t.contains("text ") || t.contains("message") { return "text_person" }
+        if QuickFacts.explicitQuery(in: t) != nil { return "quick_fact" }
         if t.contains("where") { return "where_is" }
         if t.contains("around") || t.contains("see") || t.contains("front") { return "describe_surroundings" }
+        if t.hasPrefix("what is ") || t.hasPrefix("what's ") || t.hasPrefix("whats ") { return "quick_fact" }
         return "who_is_here"
     }
     static func nameArgument(in text: String) -> String? {

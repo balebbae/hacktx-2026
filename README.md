@@ -24,7 +24,7 @@ Familiar is one SwiftUI app with no backend. Everything personal (faces, embeddi
 | Memory | `Familiar/Memory` | `JSONPeopleStore` and `ContactsBridge` (iOS contacts, `tel:` and `sms:`) |
 | Flows | `Familiar/Flows` | `ConsentFlow`, `CommandRouter`, `RollCall` |
 | Intelligence | `Familiar/Intelligence` | name extraction, yes/no classification, `VisionLLMClient` |
-| UI | `Familiar/UI` | Readiness, Home, People, Person, Settings, Judge view, consent card, self-enroll |
+| UI | `Familiar/UI` | onboarding, Today, Room radar, People and places map, You (vision profiles, accessibility), Judge view, consent card, self-enroll |
 
 `Services.make(source:state:)` builds the object graph and `FlowRuntime.bind` wires the flows and Poyo on top of it. Every producer exposes `subscribe() -> AsyncStream<T>`, so modules never hold references to each other's internals. The full set of contracts is in [`Familiar/Core/Contracts.swift`](Familiar/Core/Contracts.swift).
 
@@ -75,7 +75,7 @@ These are enforced in code and shown on the Judge view banner. See [AGENTS.md](A
 
 [docs/DEMO_TALKING_POINTS.md](docs/DEMO_TALKING_POINTS.md) lists every feature, what we used and why, split by who presents it.
 
-Not on `main` yet: SerpApi quick facts (`feat/quick-facts`), the full UI redesign (`sahas`, `devin/1761388600-ui-remodel`), and the Instagram and Muse samples (`keane`, `samples/muse`, standalone Python).
+Not on `main` yet: the Instagram and Muse samples (`keane`, `samples/muse`, standalone Python).
 
 ## Build and run
 
@@ -89,9 +89,20 @@ xcodebuild -scheme Familiar -destination 'platform=iOS Simulator,name=iPhone 17'
 
 On a device, pick your personal team under Signing & Capabilities once. The bundle id is `com.familiar.hacktx`. In the Simulator the app uses the fixture source (`mixed.mp4`) with `ScriptedPerception`, `FakeTranscriber` and `LogSpeaker`, so the Judge view shows scripted boxes and spoken cues without any hardware.
 
+### UI build notes
+The SwiftUI redesign from the `sahas` branch is on `main` ([DESIGN_SPEC](docs/DESIGN_SPEC.md), [DESIGN_SYSTEM](docs/DESIGN_SYSTEM.md), [UI_CONTRACTS](docs/UI_CONTRACTS.md)). Build notes:
+
+- **Fonts.** Plus Jakarta Sans Regular/Medium/SemiBold/Bold live in `Familiar/Resources/Fonts/` and are registered in `Familiar/Info.plist` under `UIAppFonts`. Every label goes through `FamiliarType.*(scale)`; if the fonts ever go missing from the bundle, `FamiliarFont` falls back to the rounded system face instead of Times New Roman.
+- **libraries.dev kits.** Six products of the `Libraries.dev` package (branch `main`, pinned in `Package.resolved`) are linked to the app target in `project.pbxproj`: `BotAvatarsKit` (Mimo), `ThinkingOrbsKit` (status orb), `VoiceGlowKit` (consent card glow), `BorderBeamKit` (nearby card and consent card beams), `MetalFxKit` + its dependency `MagnetKit` (the liquid-metal "Who's here?" ring). Xcode resolves them on first open; if resolution fails, File → Packages → Resolve Package Versions. The MetalFx shaders compile as part of the normal build.
+- **iOS 18 APIs.** `MeshGradient`, `Color.mix`, `Group(subviews:)` and `onScrollPhaseChange` are used unguarded because `IPHONEOS_DEPLOYMENT_TARGET` is 18.0. The one iOS 26 API (`glassEffect` on the pager's edge strips) sits behind `#if compiler(>=6.2)` + `if #available(iOS 26, *)`, so Xcode 16 builds the material fallback and Xcode 26 the liquid glass.
+- **Launch arguments.** `--onboarding` replays the first-launch flow; `--glasses` opens the glasses registration directly and boots the pipeline at once; `-demoConsentCard` shows the consent card over the tabs for screenshots.
+- **First launch.** Onboarding runs before the pipeline boots, so no camera or microphone prompt appears over the Welcome page; the permissions checklist (`ReadinessView`) is the Privacy page's Continue step and reappears once on Today if it was skipped.
+- **Snapshots.** `SNAPSHOT_DIR=$PWD/docs/snapshots xcodebuild … -only-testing:FamiliarTests/SnapshotRenderTests test` renders Welcome, Today, Room radar, People, consent card, Accessibility settings and Mimo at the balanced and severe vision profiles.
+- **What was not possible on the design machines.** The branch was written on Macs without an iOS SDK: every file passes `xcrun swiftc -parse` (Swift 5 and 6 modes) and the kit signatures were checked against the pinned libraries.dev sources, but the first real `xcodebuild` happens on your Mac. If something fails to type-check, the usual suspects are listed in docs/HANDOFF.md under "Design branch (sahas)".
+
 ### Secrets
 
-`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`. URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
+`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`, `SERPAPI_KEY` (quick facts: "Poyo, look up the Longhorns game"; off when empty). URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
 
 ### Fixtures
 

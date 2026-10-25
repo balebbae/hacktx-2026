@@ -1,34 +1,45 @@
 import SwiftUI
+import BorderBeamKit
 
 /// Full-screen flow for a sighted stranger holding the phone: intro → front camera scan → name → consent → done.
-/// Large type, every control labelled; the wearer only hears the heads-up and the result.
+/// Same canvas, Mimo and pills as the consent card; every control labelled; the wearer only hears the heads-up and the result.
 struct SelfEnrollView: View {
     @ObservedObject var model: SelfEnrollModel
     let onClose: () -> Void
+    @Environment(\.visionScale) private var scale
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @FocusState private var nameFocused: Bool
+    @State private var yesBurst = 0
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 18) {
             header
-            Spacer(minLength: 0)
-            content
-            Spacer(minLength: 0)
+            ScrollView {
+                VStack(spacing: 18) { content }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .scrollBounceBehavior(.basedOnSize)
             footer
         }
-        .padding(24)
-        .background(Color(.systemBackground))
+        .padding(FamiliarPalette.margin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .familiarCanvas()
         .onAppear { model.open() }
-        .animation(.default, value: model.step)
+        .animation(scale.simplifyMotion ? nil : .easeInOut(duration: 0.3), value: model.step)
     }
 
     @ViewBuilder private var header: some View {
         HStack {
-            Text(stepTitle).font(.headline).foregroundStyle(.secondary).accessibilityAddTraits(.isHeader)
+            Eyebrow(text: stepTitle)
+                .accessibilityAddTraits(.isHeader)
             Spacer()
             switch model.step {
             case .done, .cancelled, .saving: EmptyView()
             default:
                 Button("Cancel", role: .cancel) { Task { await model.cancel(); onClose() } }
+                    .buttonStyle(GhostPillStyle())
+                    .frame(width: 120 * scale.textScale)
                     .accessibilityHint("Stops and saves nothing")
             }
         }
@@ -37,61 +48,85 @@ struct SelfEnrollView: View {
     @ViewBuilder private var content: some View {
         switch model.step {
         case .intro:
-            Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 64)).accessibilityHidden(true)
-            bigText(model.introText)
-            Text("You will see yourself on the camera, type your name, then tap YES or No. Your face never leaves this phone.")
-                .font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            MimoView(state: .waitingForConsent, size: 120, showsGlow: !scale.highContrast)
+            card {
+                bigText(model.introText)
+                supporting("You will see yourself on the camera, type your name, then tap Yes or No. Your face never leaves this phone.")
+            }
         case .scanning:
             scanPreview
-            bigText(model.hint)
-                .accessibilityLabel("Scanning. \(model.hint)")
-            if let err = model.error { Text(err).foregroundStyle(.red).font(.footnote).accessibilityLabel("Camera problem: \(err)") }
+            card {
+                bigText(model.hint)
+                    .accessibilityLabel("Scanning. \(model.hint)")
+                if let err = model.error {
+                    Text(err)
+                        .font(FamiliarType.supporting(scale))
+                        .foregroundStyle(FamiliarPalette.danger)
+                        .accessibilityLabel("Camera problem: \(err)")
+                }
+            }
         case .name:
-            Image(systemName: "textformat").font(.system(size: 48)).accessibilityHidden(true)
-            bigText("What should \(model.userName) call you?")
-            TextField("Your first name", text: $model.name)
-                .font(.title2).textFieldStyle(.roundedBorder).textContentType(.givenName).submitLabel(.next)
-                .focused($nameFocused)
-                .onSubmit { model.submitName() }
-                .accessibilityLabel("Your first name").accessibilityHint("Used when the wearer is told you are nearby")
-            TextField("Phone (optional)", text: $model.phone)
-                .font(.title3).textFieldStyle(.roundedBorder).keyboardType(.phonePad).textContentType(.telephoneNumber)
-                .accessibilityHint("Saved to the contact so they can call or text you")
-            Text("Only your name is said out loud. Nothing is saved yet.").font(.footnote).foregroundStyle(.secondary)
+            MimoView(state: .listening, size: 96, showsGlow: !scale.highContrast)
+            card {
+                bigText("What should \(model.userName) call you?")
+                field("Your first name", text: $model.name)
+                    .textContentType(.givenName)
+                    .submitLabel(.next)
+                    .focused($nameFocused)
+                    .onSubmit { model.submitName() }
+                    .accessibilityLabel("Your first name")
+                    .accessibilityHint("Used when the wearer is told you are nearby")
+                field("Phone (optional)", text: $model.phone)
+                    .keyboardType(.phonePad)
+                    .textContentType(.telephoneNumber)
+                    .accessibilityHint("Saved to the contact so they can call or text you")
+                supporting("Only your name is said out loud. Nothing is saved yet.")
+            }
         case .consent, .saving:
-            Image(systemName: "person.crop.circle.badge.questionmark").font(.system(size: 56)).accessibilityHidden(true)
-            bigText(model.consentText)
-            if model.step == .saving { ProgressView("Saving…").accessibilityLabel("Saving") }
-            if let err = model.error { Text(err).foregroundStyle(.red).font(.footnote) }
+            MimoView(state: model.step == .saving ? .thinking : .waitingForConsent, size: 110, showsGlow: !scale.highContrast)
+            card(beam: model.step == .consent) {
+                bigText(model.consentText)
+                    .accessibilityAddTraits(.isHeader)
+                MimoStatusLine(state: model.step == .saving ? .thinking : .waitingForConsent,
+                               text: model.step == .saving ? "Saving…" : "Tap your answer")
+                if let err = model.error {
+                    Text(err).font(FamiliarType.supporting(scale)).foregroundStyle(FamiliarPalette.danger)
+                }
+            }
         case .done:
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 72)).foregroundStyle(.green).accessibilityHidden(true)
-            bigText(model.doneText)
-            Text("\(model.userName) will hear your name when you walk up. You can be removed at any time from People.")
-                .font(.body).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            MimoView(state: .success, size: 120, showsGlow: !scale.highContrast)
+            card {
+                bigText(model.doneText)
+                supporting("\(model.userName) will hear your name when you walk up. You can be removed at any time from People.")
+            }
         case .cancelled:
-            Image(systemName: "xmark.circle").font(.system(size: 64)).accessibilityHidden(true)
-            bigText("Nothing saved. Hand the phone back.")
+            MimoView(state: .idle, size: 110, showsGlow: !scale.highContrast)
+            card { bigText("Nothing saved. Hand the phone back.") }
         }
     }
 
     private var scanPreview: some View {
-        ZStack {
+        let side = min(280, 240 * scale.iconScale)
+        return ZStack {
             if let img = model.preview {
                 Image(decorative: img, scale: 1)
                     .resizable().scaledToFill()
                     .scaleEffect(x: model.mirrorsPreview ? -1 : 1, y: 1)
             } else {
-                Color(.secondarySystemFill)
-                Image(systemName: "camera").font(.system(size: 48)).foregroundStyle(.secondary)
+                FamiliarPalette.surface(scale)
+                Image(systemName: "camera")
+                    .font(.system(size: 44 * scale.iconScale))
+                    .foregroundStyle(FamiliarPalette.inkSecondary(scale))
             }
             Circle()
                 .trim(from: 0, to: model.progress)
-                .stroke(Color.green, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                .stroke(FamiliarPalette.ocean(scale), style: StrokeStyle(lineWidth: 10, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .padding(8)
+                .padding(6)
         }
-        .frame(width: 280, height: 280)
+        .frame(width: side, height: side)
         .clipShape(Circle())
+        .overlay(Circle().strokeBorder(FamiliarPalette.stroke(scale), lineWidth: scale.strokeWidth))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Camera preview, \(model.collected) of \(model.config.targetEmbeddings) face samples")
     }
@@ -99,59 +134,106 @@ struct SelfEnrollView: View {
     @ViewBuilder private var footer: some View {
         switch model.step {
         case .intro:
-            bigButton("Yes, scan my face", systemImage: "camera.viewfinder", tint: .accentColor) { Task { await model.beginScan() } }
+            VStack(spacing: 12) {
+                Button { Task { await model.beginScan() } } label: {
+                    Label("Yes, scan my face", systemImage: "camera.viewfinder")
+                }
+                .buttonStyle(PrimaryPillStyle())
                 .accessibilityHint("Turns on the front camera for a few seconds")
-            Button("No thanks") { Task { await model.cancel(); onClose() } }
-                .font(.title3).accessibilityHint("Closes this screen and saves nothing")
+                Button("No thanks") { Task { await model.cancel(); onClose() } }
+                    .buttonStyle(GhostPillStyle())
+                    .accessibilityHint("Closes this screen and saves nothing")
+            }
         case .scanning:
-            bigButton("Next", systemImage: "arrow.right", tint: .accentColor) { model.finishScan() }
+            Button { model.finishScan() } label: { Label("Next", systemImage: "arrow.right") }
+                .buttonStyle(PrimaryPillStyle())
                 .disabled(!model.canContinueScan)
+                .opacity(model.canContinueScan ? 1 : 0.5)
                 .accessibilityHint(model.canContinueScan ? "Go on to your name" : "Enabled once enough face samples are collected")
         case .name:
-            bigButton("Next", systemImage: "arrow.right", tint: .accentColor) { model.submitName() }
+            Button { model.submitName() } label: { Label("Next", systemImage: "arrow.right") }
+                .buttonStyle(PrimaryPillStyle())
                 .disabled(!model.canSubmitName)
+                .opacity(model.canSubmitName ? 1 : 0.5)
                 .accessibilityHint("Shows the permission question")
         case .consent, .saving:
-            HStack(spacing: 16) {
-                answerButton("No", yes: false, color: .red)
-                answerButton("YES", yes: true, color: .green)
+            VStack(spacing: 12) {
+                answers
+                supporting("Faces stay on this phone. You can be removed any time.")
             }
-            .disabled(model.step == .saving)
-            Text("Faces stay on this phone. You can be removed any time.")
-                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
         case .done, .cancelled:
-            bigButton("Done", systemImage: "hand.raised", tint: .accentColor) { Task { await model.close(); onClose() } }
+            Button { Task { await model.close(); onClose() } } label: { Label("Done", systemImage: "hand.raised") }
+                .buttonStyle(PrimaryPillStyle())
                 .accessibilityHint("Closes this screen")
         }
     }
 
+    private var answers: some View {
+        let layout: AnyLayout = (dynamicTypeSize.isAccessibilitySize || scale.prefersStackedLayout)
+            ? AnyLayout(VStackLayout(spacing: 14))
+            : AnyLayout(HStackLayout(spacing: 14))
+        return layout {
+            Button { answer(false) } label: { pillText("No") }
+                .buttonStyle(GhostPillStyle())
+                .accessibilityLabel("No, do not remember me")
+                .accessibilityHint("Nothing is saved")
+            Button { answer(true) } label: { pillText("Yes") }
+                .buttonStyle(AccentPillStyle())
+                .overlay(ParticleBurst(trigger: yesBurst, color: FamiliarPalette.ocean(scale)).allowsHitTesting(false))
+                .accessibilityLabel("Yes, remember me")
+                .accessibilityHint("Saves your face on this phone only")
+        }
+        .disabled(model.step == .saving)
+    }
+
+    private func answer(_ yes: Bool) {
+        if yes { yesBurst += 1; FamiliarHaptics.play(.consent) } else { FamiliarHaptics.play(.accepted) }
+        Task { await model.answer(yes: yes); if !yes { onClose() } }
+    }
+
+    // MARK: - Pieces
+
+    private func card<C: View>(beam: Bool = false, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(spacing: 14) { content() }
+            .frame(maxWidth: .infinity)
+            .padding(22)
+            .background(FamiliarPalette.surface(scale), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(FamiliarPalette.stroke(scale), lineWidth: scale.strokeWidth))
+            .borderBeam(.md, colorVariant: .ocean, theme: .auto, active: beam, borderRadius: 26)
+            .accessibilityElement(children: .contain)
+    }
+
     private func bigText(_ s: String) -> some View {
         Text(s)
-            .font(.system(.title, design: .rounded).weight(.semibold))
+            .font(FamiliarType.title(scale))
+            .foregroundStyle(FamiliarPalette.ink(scale))
             .multilineTextAlignment(.center)
-            .minimumScaleFactor(0.6)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func bigButton(_ title: String, systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.title2.weight(.bold))
-                .frame(maxWidth: .infinity, minHeight: 64)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(tint)
+    private func supporting(_ s: String) -> some View {
+        Text(s)
+            .font(FamiliarType.supporting(scale))
+            .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func answerButton(_ title: String, yes: Bool, color: Color) -> some View {
-        Button { Task { await model.answer(yes: yes); if !yes { onClose() } } } label: {
-            Text(title)
-                .font(.system(size: 40, weight: .heavy, design: .rounded))
-                .frame(maxWidth: .infinity, minHeight: 120)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(color)
-        .accessibilityLabel(yes ? "Yes, remember me" : "No, do not remember me")
-        .accessibilityHint(yes ? "Saves your face on this phone only" : "Nothing is saved")
+    private func field(_ title: String, text: Binding<String>) -> some View {
+        TextField(title, text: text)
+            .font(FamiliarType.body(scale))
+            .foregroundStyle(FamiliarPalette.ink(scale))
+            .padding(.horizontal, 18)
+            .frame(minHeight: scale.hitTarget)
+            .background(FamiliarPalette.canvas(scale), in: Capsule())
+            .overlay(Capsule().strokeBorder(FamiliarPalette.stroke(scale), lineWidth: scale.strokeWidth))
+    }
+
+    private func pillText(_ word: String) -> some View {
+        Text(word)
+            .font(FamiliarType.display(scale))
+            .frame(maxWidth: .infinity, minHeight: scale.hitTarget * 2)
     }
 
     private var stepTitle: String {

@@ -40,9 +40,15 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
     }
 
     let cooldowns: Cooldowns
+    /// Whether "Marcus." is said when a known person starts talking (You → Voice and cues → Speaking first). Read on
+    /// every event so the toggle applies at once; the default keeps it on, as the policy always behaved.
+    let speakingCueEnabled: () -> Bool
     private let state = OSAllocatedUnfairLock(initialState: State())
 
-    init(cooldowns: Cooldowns = Cooldowns()) { self.cooldowns = cooldowns }
+    init(cooldowns: Cooldowns = Cooldowns(), speakingCueEnabled: @escaping () -> Bool = { true }) {
+        self.cooldowns = cooldowns
+        self.speakingCueEnabled = speakingCueEnabled
+    }
 
     func reset() { state.withLock { $0 = State() } }
 
@@ -88,7 +94,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
                 return [cue(Phrasebook.left(name: name), pid, "left", priority: 2)]
 
             case let .speakingStarted(t):
-                guard mode != .quiet, case let .known(pid, name, _) = t.identity else { return [] }
+                guard mode != .quiet, speakingCueEnabled(), case let .known(pid, name, _) = t.identity else { return [] }
                 guard s.spokenTracks.insert(t.trackID).inserted else { return [] }
                 return [cue(Phrasebook.speaking(name: name), pid, "speaking", priority: 1, dedupeKey: "speaking:\(pid.uuidString)")]   // S7
 

@@ -25,7 +25,7 @@ The app sends the system prompt as an override at the start of every session, so
 Paste exactly (the app also sends it as an override):
 
 ```
-You help {{user_name}}, a blind person wearing camera glasses. You receive text only and your replies are spoken. Messages starting with [to you] are addressed to you: always answer, in at most 12 words. Messages starting with [overheard] are the wearer talking to someone else: reply exactly SKIP unless the wearer clearly needs something you can give (where someone is, who is here, what is around); then answer in at most 12 words. Context updates say who is visible, what is around and what other people said; never reply to them. Use the client tools for anything about the room: who_is_here, where_is(name), describe_surroundings, remember_them, set_mode(mode), call_person(name), text_person(name), mute. Repeat tool results almost verbatim. Only these people may be named: {{known_names}}. Never name, describe or guess anyone else, even if you heard their name; say someone. Never talk about faces or photos. Never agree to remember anyone yourself: only the remember_them tool can, and the other person must say yes to it. Never say the name of this app.
+You help {{user_name}}, a blind person wearing camera glasses. You receive text only and your replies are spoken. Messages starting with [to you] are addressed to you: always answer, in at most 12 words. Messages starting with [overheard] are the wearer talking to someone else: reply exactly SKIP unless the wearer clearly needs something you can give (where someone is, who is here, what is around); then answer in at most 12 words. Context updates say who is visible, what is around and what other people said; never reply to them. Use the client tools for anything about the room: who_is_here, where_is(name), describe_surroundings, remember_them, set_mode(mode), call_person(name), text_person(name), mute. Repeat tool results almost verbatim. When the wearer asks about something you cannot know (a team, a game, a score, an event, a place, a word, a product, the weather), call quick_fact(query) with a short search query built from what they said or heard; never put a person's name in it. Only these people may be named: {{known_names}}. Never name, describe or guess anyone else, even if you heard their name; say someone. Never talk about faces or photos. Never agree to remember anyone yourself: only the remember_them tool can, and the other person must say yes to it. Never say the name of this app.
 ```
 
 `{{user_name}}` and `{{known_names}}` are dynamic variables the app fills in on every session. If the dashboard asks you to define them, add both as text with any placeholder default.
@@ -63,6 +63,7 @@ For every tool: **Type = Client**, **Wait for response = On**, **Response timeou
 | `call_person` | Open the phone dialer for a known person. Does not place the call. | `name` (String, required) |
 | `text_person` | Open Messages to a known person. Does not send anything. | `name` (String, required) |
 | `mute` | Mute the app's spoken cues. | none |
+| `quick_fact` | One-line answer from a web search (SerpApi) for something the wearer asked about: a team, game, score, event, place, word, product or the weather. Never a person. Returns a short sentence to repeat verbatim. | `query` (String, required): a short search query built from the wearer's words, never a person's name |
 
 Click **Save** after each tool, then **Save** on the agent.
 
@@ -80,6 +81,7 @@ Expected: the agent calls a tool and the answer plays in the glasses while the c
 - Whenever it changes (checked every 2 s): a context line such as `Visible now: Marcus ahead close; 2 other people. Around: Stairs ahead. Kitchen. Table, chair.` (names only for people who consented; strangers are a count; scene words come from an on-device allowlist that never includes people or clothing).
 - The wearer's final transcript segments as `[overheard] …` turns; wake-word phrases that are not built-in commands as `[to you] …`; other people's speech as `Other person said: …` context.
 - Tool results: the same short phrases the app already speaks.
+- `quick_fact`: only the search query (a few words) goes to SerpApi (`serpapi.com`, Google engine, `SERPAPI_KEY` in `Secrets.xcconfig`); no location, no transcript, no audio or frames. The app refuses queries that contain a saved person's name or the wearer's ("I don't look people up."). Without a key the tool answers "Search isn't set up."
 - Never: audio, camera frames, faces, photos, embeddings, or anything about a stranger beyond a count. Nothing at all while a consent flow runs.
 
 ## Hard limits in the app (not configurable)

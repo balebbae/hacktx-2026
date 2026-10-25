@@ -24,7 +24,7 @@ final class AgentToolRouterTests: XCTestCase {
     }
 
     func testToolNamesMatchDashboardList() {
-        XCTAssertEqual(AgentToolRouter.toolNames, ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute"])
+        XCTAssertEqual(AgentToolRouter.toolNames, ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute", "quick_fact"])
     }
 
     func testWhoIsHereReturnsRollCallText() async {
@@ -110,6 +110,26 @@ final class AgentToolRouterTests: XCTestCase {
         XCTAssertEqual(r.text, "Muted.")
         XCTAssertTrue(gate.muted)
         XCTAssertEqual(mutes, [true])
+    }
+
+    func testQuickFactSearchesOnlyTheQueryAndRefusesNames() async {
+        var r = await router.handle(AgentToolCall(name: "quick_fact", parameters: ["query": "Longhorns game"]))
+        XCTAssertEqual(r.text, Phrasebook.searchUnavailable, "no SERPAPI_KEY wired")
+        XCTAssertTrue(r.isError)
+        let source = FakeQuickFactSource()
+        source.facts["Longhorns game"] = QuickFact(text: "Ole Miss Rebels 27, Texas Longhorns 34, final.", source: "sports")
+        router.quickFacts = QuickFacts(source: source, blockedNames: { [unowned self] in store.all().map(\.name) })
+        r = await router.handle(AgentToolCall(name: "quick_fact", parameters: ["query": "Longhorns game"]))
+        XCTAssertEqual(r.text, "Ole Miss Rebels 27, Texas Longhorns 34, final.")
+        XCTAssertFalse(r.isError)
+        r = await router.handle(AgentToolCall(name: "quick_fact", parameters: ["query": "who is Marcus"]))
+        XCTAssertEqual(r.text, Phrasebook.noPeopleLookups)
+        XCTAssertFalse(r.isError, "spoken as is")
+        r = await router.handle(AgentToolCall(name: "quick_fact", parameters: ["query": "HackTX"]))
+        XCTAssertEqual(r.text, Phrasebook.nothingFound)
+        r = await router.handle(AgentToolCall(name: "quick_fact"))
+        XCTAssertTrue(r.isError)
+        XCTAssertEqual(source.queries, ["Longhorns game", "HackTX"], "a saved name never reaches the network")
     }
 
     func testUnknownToolIsError() async {

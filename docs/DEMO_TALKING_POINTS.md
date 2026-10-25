@@ -1,6 +1,6 @@
 # Demo talking points
 
-Everything we built, what we used, and why. Split by who presents it. Each feature says where it lives: `main`, a branch that isn't merged yet, or a standalone sample.
+Everything we built, what we used, and why. Split by who presents it. Everything is on `main` except Keane's Instagram and Muse samples, which are standalone Python on the `keane` branch.
 
 ## Caleb: architecture and pipelines
 
@@ -47,7 +47,7 @@ Consent and privacy (on `main`)
 
 ## Sahas: frontend and accessibility
 
-The redesign is on the `sahas` and `devin/1761388600-ui-remodel` branches, not on `main` yet. `main` has the simpler Home, People, Settings, Judge view and consent card.
+The redesign from the `sahas` branch is merged into `main`.
 
 Design system
 
@@ -74,7 +74,7 @@ Voice control and tap-to-hear
 
 ## Keane: APIs
 
-SerpApi quick facts (branch `feat/quick-facts`, not merged)
+SerpApi quick facts (on `main`)
 
 - "Poyo, look up HackTX" or "what does that mean?" does one web search and says one short fact back.
 - `SerpApiClient` calls `GET https://serpapi.com/search.json` with SafeSearch on and a 6 second timeout, in its own ephemeral URL session.

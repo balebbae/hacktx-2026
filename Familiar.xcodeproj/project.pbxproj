@@ -13,6 +13,12 @@
 		B1B2C3D4E5F60718293A4B03 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */; };
 		B1B2C3D4E5F60718293A4B04 /* MWDATInputs in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B04 /* MWDATInputs */; };
 		F659A13EEBDC31C271DAE8C4 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = C28C4C27ED14F37B9411CA27 /* onnxruntime */; };
+		C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB21 /* BotAvatarsKit */; };
+		C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB22 /* ThinkingOrbsKit */; };
+		C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB23 /* VoiceGlowKit */; };
+		C0FFEE00000000000000AB14 /* BorderBeamKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB24 /* BorderBeamKit */; };
+		C0FFEE00000000000000AB15 /* MetalFxKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB25 /* MetalFxKit */; };
+		C0FFEE00000000000000AB16 /* MagnetKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB26 /* MagnetKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -63,6 +69,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				4A0A83E1308DE74700BAB4AF /* ElevenLabs in Frameworks */,
+				C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */,
+				C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */,
+				C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */,
+				C0FFEE00000000000000AB14 /* BorderBeamKit in Frameworks */,
+				C0FFEE00000000000000AB15 /* MetalFxKit in Frameworks */,
+				C0FFEE00000000000000AB16 /* MagnetKit in Frameworks */,
 				F659A13EEBDC31C271DAE8C4 /* onnxruntime in Frameworks */,
 				B1B2C3D4E5F60718293A4B01 /* MWDATCore in Frameworks */,
 				B1B2C3D4E5F60718293A4B02 /* MWDATCamera in Frameworks */,
@@ -149,6 +161,12 @@
 				A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */,
 				A1B2C3D4E5F60718293A4B04 /* MWDATInputs */,
 				E1E2E3E4E5E60718293A4B05 /* ElevenLabs */,
+				C0FFEE00000000000000AB21 /* BotAvatarsKit */,
+				C0FFEE00000000000000AB22 /* ThinkingOrbsKit */,
+				C0FFEE00000000000000AB23 /* VoiceGlowKit */,
+				C0FFEE00000000000000AB24 /* BorderBeamKit */,
+				C0FFEE00000000000000AB25 /* MetalFxKit */,
+				C0FFEE00000000000000AB26 /* MagnetKit */,
 			);
 			productName = Familiar;
 			productReference = 206921FA0F7370D6772196A6 /* Familiar.app */;
@@ -186,6 +204,7 @@
 				274A53CAE3C52ACB43366862 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 				5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
 				E1E2E3E4E5E60718293A4B00 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */,
+				C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C8FA5AF39B14B1F1DBC424DF /* Products */;
@@ -517,6 +536,14 @@
 				version = 3.4.0;
 			};
 		};
+		C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Jakubantalik/Libraries.dev";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -549,6 +576,36 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E1E2E3E4E5E60718293A4B00 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */;
 			productName = ElevenLabs;
+		};
+		C0FFEE00000000000000AB21 /* BotAvatarsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = BotAvatarsKit;
+		};
+		C0FFEE00000000000000AB22 /* ThinkingOrbsKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = ThinkingOrbsKit;
+		};
+		C0FFEE00000000000000AB23 /* VoiceGlowKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = VoiceGlowKit;
+		};
+		C0FFEE00000000000000AB24 /* BorderBeamKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = BorderBeamKit;
+		};
+		C0FFEE00000000000000AB25 /* MetalFxKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = MetalFxKit;
+		};
+		C0FFEE00000000000000AB26 /* MagnetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = MagnetKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

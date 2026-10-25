@@ -140,6 +140,9 @@ final class FlowRuntime: ObservableObject {
         // unparsed wake-word phrases are asked directly.
         let toolRouter = AgentToolRouter(perception: s.perception, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, consentFlow: flow, cueGate: s.cueGate, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m }, lastSeen: { [weak r] in r?.lastSeen ?? [:] })
         toolRouter.surroundings = surroundings
+        // Quick facts (SerpApi): one text query when the wearer asks about something heard or wondered about.
+        let facts = QuickFacts(source: SerpApiClient(apiKey: Secrets.serpApiKey), blockedNames: { [weak state] in store.all().map(\.name) + [state?.userName].compactMap { $0 } })
+        toolRouter.quickFacts = facts
         let session = AgentSession(router: toolRouter, speaker: s.speaker, cueGate: s.cueGate, userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) }, starter: FlowRuntime.agentStarter)
         // The spoken flow, or self-enroll (which only raises the gate's flag).
         session.consentActive = { [weak flow, weak gate = s.cueGate] in ((flow as? SpokenConsentFlow)?.isActive ?? false) || (gate?.consentActive ?? false) }
@@ -172,6 +175,7 @@ final class FlowRuntime: ObservableObject {
             b.scribe = ScribeTranscriber()
             b.audio = clipRecorder
             b.rename = { [weak self] name in await self?.renameCurrentPerson(to: name) ?? Phrasebook.nobodyToUpdate }
+            b.quickFacts = facts
             tasks += b.start(speech: s.transcriber.subscribe(), unparsed: wake?.subscribeUnparsed())
             r.askAssistant = { [weak b] question in await b?.ask(question) }
             brain = b

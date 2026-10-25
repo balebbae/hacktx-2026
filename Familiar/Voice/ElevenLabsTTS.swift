@@ -17,6 +17,9 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
     /// v4 turbo answers in about 1 s; a tighter limit would fall back to the Apple voice most of the time.
     var firstByteTimeout: TimeInterval = 3
     var previousText = "Here is what I see."
+    /// The wearer's speech-rate preference, read per request and clamped to the `speed` range ElevenLabs accepts
+    /// (0.7…1.2). `VoiceFactory` wires it to `SpeechPreferences`; the default is the unchanged 1.0.
+    var speedProvider: () -> Double = { 1 }
     static let sampleRate: Double = 16_000
     private let semaphore: AsyncSemaphore
     private let warmSemaphore = AsyncSemaphore(count: 1)
@@ -32,7 +35,7 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
         self.semaphore = AsyncSemaphore(count: maxConcurrent)
     }
 
-    static func request(apiKey: String, voiceID: String, model: String, text: String, previousText: String, stream: Bool = false) -> URLRequest {
+    static func request(apiKey: String, voiceID: String, model: String, text: String, previousText: String, speed: Double = 1.0, stream: Bool = false) -> URLRequest {
         var req = URLRequest(url: URL(string: "https://api.elevenlabs.io/v1/text-to-speech/\(voiceID)\(stream ? "/stream" : "")?output_format=pcm_16000")!)
         req.httpMethod = "POST"
         req.setValue(apiKey, forHTTPHeaderField: "xi-api-key")
@@ -41,23 +44,35 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
         let body: [String: Any] = [
             "text": text,
             "model_id": model,
-            "voice_settings": ["stability": 0.5, "similarity_boost": 0.75, "speed": 1.0],
+            "voice_settings": ["stability": 0.5, "similarity_boost": 0.75, "speed": speed],
             "previous_text": previousText,
         ]
         req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return req
     }
 
-    func isCached(_ text: String) -> Bool { cache.has(voiceID: voiceID, model: model, text: text) }
+    /// The speed the next request asks for, inside ElevenLabs' accepted range.
+    var speed: Double { min(1.2, max(0.7, speedProvider())) }
+
+    /// Pace is rendered into the audio, so a phrase at another speed is another cache entry. 1.0 keeps the plain
+    /// model key, so a cache prewarmed before this setting existed stays valid.
+    static func cacheModel(_ model: String, speed: Double) -> String {
+        speed == 1 ? model : "\(model)@\(String(format: "%.2f", speed))"
+    }
+
+    private var cacheModel: String { ElevenLabsTTS.cacheModel(model, speed: speed) }
+
+    func isCached(_ text: String) -> Bool { cache.has(voiceID: voiceID, model: cacheModel, text: text) }
 
     func synthesize(_ text: String) async throws -> SynthesizedAudio {
-        if let cached = cache.samples(voiceID: voiceID, model: model, text: text) {
+        let cacheModel = self.cacheModel
+        if let cached = cache.samples(voiceID: voiceID, model: cacheModel, text: text) {
             return SynthesizedAudio(samples: cached, sampleRate: ElevenLabsTTS.sampleRate, source: "elevenlabs-cache")
         }
         livePending.withLock { $0 += 1 }
         defer { livePending.withLock { $0 -= 1 } }
         let data = try await fetch(text)
-        cache.store(data, voiceID: voiceID, model: model, text: text)
+        cache.store(data, voiceID: voiceID, model: cacheModel, text: text)
         return SynthesizedAudio(samples: PCM16.decode(data), sampleRate: ElevenLabsTTS.sampleRate, source: id)
     }
 
@@ -69,8 +84,9 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
         defer { Task { await warmSemaphore.signal() } }
         while livePending.withLock({ $0 }) > 0 { try await Task.sleep(nanoseconds: 50_000_000) }
         guard !isCached(text) else { return }
+        let cacheModel = self.cacheModel
         let data = try await fetch(text)
-        cache.store(data, voiceID: voiceID, model: model, text: text)
+        cache.store(data, voiceID: voiceID, model: cacheModel, text: text)
     }
 
     private func fetch(_ text: String) async throws -> Data {
@@ -86,7 +102,7 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
     /// Sends the request and returns the body once the response headers are in. Only the first byte races the
     /// timer; the body streams in afterwards untimed.
     private func open(_ text: String, stream: Bool) async throws -> URLSession.AsyncBytes {
-        let req = ElevenLabsTTS.request(apiKey: apiKey, voiceID: voiceID, model: model, text: text, previousText: previousText, stream: stream)
+        let req = ElevenLabsTTS.request(apiKey: apiKey, voiceID: voiceID, model: model, text: text, previousText: previousText, speed: speed, stream: stream)
         let timeout = firstByteTimeout
         let session = self.session
         let (bytes, response) = try await withThrowingTaskGroup(of: (URLSession.AsyncBytes, URLResponse).self) { group in
@@ -142,7 +158,7 @@ final class ElevenLabsTTS: SpeechSynthesizer, StreamingSpeechSynthesizer, @unche
                         emitted = true
                     }
                     guard emitted else { throw Failure.emptyAudio }
-                    cache.store(all, voiceID: voiceID, model: model, text: text)
+                    cache.store(all, voiceID: voiceID, model: cacheModel, text: text)
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
