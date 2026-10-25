@@ -53,6 +53,8 @@
 	<string>$(MODAL_KEY)</string>
 	<key>MODAL_SECRET</key>
 	<string>$(MODAL_SECRET)</string>
+	<key>SERPAPI_KEY</key>
+	<string>$(SERPAPI_KEY)</string>
 	<key>MWDAT</key>
 	<dict>
 		<key>AppLinkURLScheme</key>

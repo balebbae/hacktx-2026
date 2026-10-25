@@ -34,6 +34,8 @@ final class PoyoBrain: ObservableObject {
     var audio: AudioChunkClipRecorder?
     /// Renames the remembered person in view (or the one just saved); returns what to say. Set by `FlowRuntime`.
     var rename: (String) async -> String = { _ in Phrasebook.nobodyToUpdate }
+    /// SerpApi quick facts ("what's the Longhorns game?"); set by `FlowRuntime`. nil → "Search isn't set up."
+    var quickFacts: QuickFacts?
     var followUpWindow: TimeInterval = 8
     var listenWindow: TimeInterval = 8
     var clock: () -> TimeInterval = { CACurrentMediaTime() }
@@ -133,6 +135,12 @@ final class PoyoBrain: ObservableObject {
             noteAnswered()
             return
         }
+        // "Poyo, look up HackTX": an outright search skips the model; only the asked-for words leave the phone.
+        if addressed, let query = QuickFacts.explicitQuery(in: text) {
+            lines.append(AgentLine(role: .user, text: text))
+            await lookUpAndSay(query, since: clock())
+            return
+        }
         current?.cancel()                       // the newest question wins
         let task = Task { await self.answer(text, addressed: addressed) }
         current = task
@@ -164,7 +172,7 @@ final class PoyoBrain: ObservableObject {
         let json: [String: Any]
         do {
             json = try await vision.complete(system: Self.systemPrompt, text: prompt, imageJPEG: snapshot?.jpeg, schemaName: "PoyoReply", schema: Self.schema,
-                                             maxTokens: 700, cacheKey: "poyo-brain-v1", timeout: 10)
+                                             maxTokens: 700, cacheKey: "poyo-brain-v2", timeout: 10)
         } catch {
             log.error("brain failed: \(error.localizedDescription, privacy: .public)")
             lines.append(AgentLine(role: .app, text: "error: \(error.localizedDescription)"))
@@ -175,6 +183,13 @@ final class PoyoBrain: ObservableObject {
 
         if addressed, json["action"] as? String == "rename", let name = (json["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
             await renameAndSay(name)
+            return
+        }
+        if json["action"] as? String == "lookup" {
+            // The model turned "what's that?" into a search query from the conversation; the phone runs the search.
+            guard addressed else { return }
+            let query = (json["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            await lookUpAndSay((query?.isEmpty == false ? query : nil) ?? text, since: t0)
             return
         }
         if addressed, let command = Self.command(action: json["action"] as? String, name: json["name"] as? String, mode: json["mode"] as? String) {
@@ -192,6 +207,19 @@ final class PoyoBrain: ObservableObject {
         defer { noteAnswered() }
         let window = await say(line, priority: addressed ? 0 : 1)
         if let start = window?.lowerBound { lastLatency = start - t0 }
+        noteAnswered()
+    }
+
+    /// One SerpApi search for `query`, spoken as a single line. Saved names and the wearer's own are refused.
+    private func lookUpAndSay(_ query: String, since t0: TimeInterval) async {
+        let outcome: QuickFacts.Outcome
+        if let facts = quickFacts { outcome = await facts.answer(query) } else { outcome = .unavailable }
+        guard !Task.isCancelled, !consentActive() else { return }
+        let line = SpeechSanitizer.clean(QuickFacts.phrase(outcome), maxWords: 24) ?? Phrasebook.nothingFound
+        lines.append(AgentLine(role: .tool, text: "quick_fact \(query) → \(line)"))
+        lines.append(AgentLine(role: .agent, text: line))
+        lastAnswer = line
+        if let start = await say(line)?.lowerBound { lastLatency = start - t0 }
         noteAnswered()
     }
 
@@ -260,9 +288,9 @@ final class PoyoBrain: ObservableObject {
     static let schema: [String: Any] = [
         "type": "object", "additionalProperties": false,
         "properties": ["say": ["type": "string"],
-                       "action": ["type": "string", "enum": ["none", "remember", "rename", "call", "text", "mute", "unmute", "mode", "cancel"]],
-                       "name": ["type": ["string", "null"]], "mode": ["type": ["string", "null"]]],
-        "required": ["say", "action", "name", "mode"],
+                       "action": ["type": "string", "enum": ["none", "remember", "rename", "call", "text", "mute", "unmute", "mode", "cancel", "lookup"]],
+                       "name": ["type": ["string", "null"]], "mode": ["type": ["string", "null"]], "query": ["type": ["string", "null"]]],
+        "required": ["say", "action", "name", "mode", "query"],
     ]
 
     static let systemPrompt = """
@@ -279,7 +307,10 @@ final class PoyoBrain: ObservableObject {
     else: set say to SKIP unless they clearly asked something you can answer from what you see.
     Set action only when the wearer clearly asks for it: remember (save the person in front of them; the app asks \
     that person for permission, so never say they are saved), rename (change the saved name of the person they are \
-    looking at; name holds the new name), call or text (with name), mute, unmute, mode (quiet, normal or chatty), cancel. Otherwise action is none and say holds the answer.
+    looking at; name holds the new name), call or text (with name), mute, unmute, mode (quiet, normal or chatty), cancel, \
+    lookup (they ask about something you cannot know from the view: a team, a game, a score, an event, a place, a word, \
+    a product, the weather, or "what's that?" about something in the recent speech; query holds a short search query \
+    built from their words, never a person's name). Otherwise action is none and say holds the answer.
     Never say your own name. If you cannot tell, say so briefly.
     """
 }

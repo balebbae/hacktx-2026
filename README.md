@@ -24,7 +24,7 @@ xcodebuild -scheme Familiar -destination 'platform=iOS Simulator,name=iPhone 17'
 On a device: select your personal team under Signing & Capabilities once; the bundle id is `com.familiar.hacktx`. In the Simulator the app defaults to the fixture source (`mixed.mp4`) with `ScriptedPerception`, `FakeTranscriber` and `LogSpeaker` (Apple voice), so the Judge view shows scripted boxes and spoken cues without any hardware.
 
 ### Secrets
-`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`. URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
+`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`, `SERPAPI_KEY` (quick facts: "Poyo, look up the Longhorns game"; off when empty). URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
 
 ### Fixtures
 `Familiar/Resources/Fixtures/`: `*.mp4` clips (720×1280), `fixtures.json` with per-clip expectations, `*.txt` transcripts for `FakeTranscriber`, `script.json` for `ScriptedPerception`. Missing clips make the related tests skip, never fail.

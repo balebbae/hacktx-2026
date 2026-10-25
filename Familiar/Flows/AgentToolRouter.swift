@@ -29,9 +29,11 @@ struct AgentToolResult {
 
 @MainActor
 final class AgentToolRouter {
-    static let toolNames = ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute"]
+    static let toolNames = ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute", "quick_fact"]
     /// `SceneAwareness.describe(people:)`; set by `FlowRuntime`.
     var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
+    /// SerpApi quick facts; set by `FlowRuntime`. nil or unconfigured → "Search isn't set up."
+    var quickFacts: QuickFacts?
 
     private let perception: Perception
     private let peopleStore: PeopleStore
@@ -95,6 +97,14 @@ final class AgentToolRouter {
             cueGate.muted = true
             setMuted(true)
             return AgentToolResult(text: Phrasebook.muted)
+
+        case "quick_fact":
+            // Only the query the wearer asked for goes to search; saved names and the wearer's own are refused.
+            guard let query = call.string("query") else { return AgentToolResult(text: Phrasebook.didNotGetThat, isError: true) }
+            guard let facts = quickFacts, facts.isConfigured else { return AgentToolResult(text: Phrasebook.searchUnavailable, isError: true) }
+            let outcome = await facts.answer(query)
+            let text = SpeechSanitizer.clean(QuickFacts.phrase(outcome), maxWords: 24) ?? Phrasebook.nothingFound
+            return AgentToolResult(text: text, isError: outcome == .failed)
 
         default:
             return AgentToolResult(text: "Unknown tool \(call.name).", isError: true)

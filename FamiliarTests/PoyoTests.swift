@@ -254,6 +254,43 @@ final class PoyoBrainTests: XCTestCase {
         XCTAssertEqual(vision.prompts.count, 5, "and only that one")
     }
 
+    func testLookupActionRunsTheSearchOnThePhone() async {
+        let source = FakeQuickFactSource()
+        source.facts["Longhorns game"] = QuickFact(text: "Ole Miss Rebels 27, Texas Longhorns 34, final.", source: "sports")
+        brain.quickFacts = QuickFacts(source: source, blockedNames: { ["Marcus", "Caleb"] })
+        vision.reply = ["say": "Let me check.", "action": "lookup", "name": NSNull(), "mode": NSNull(), "query": "Longhorns game"]
+        await brain.ask("what's that game they mentioned")
+        XCTAssertEqual(vision.prompts.count, 1, "the model resolves 'that' from the conversation")
+        XCTAssertEqual(source.queries, ["Longhorns game"])
+        XCTAssertEqual(speaker.texts, ["Ole Miss Rebels 27, Texas Longhorns 34, final."], "the model's own line is not spoken")
+        XCTAssertTrue(brain.lines.contains { $0.role == .tool && $0.text.hasPrefix("quick_fact Longhorns game → ") })
+        XCTAssertNotNil(brain.lastLatency)
+
+        vision.reply = ["say": "Let me check.", "action": "lookup", "name": NSNull(), "mode": NSNull(), "query": "Marcus Lee"]
+        await brain.ask("what's that")
+        XCTAssertEqual(speaker.texts.last, Phrasebook.noPeopleLookups)
+        XCTAssertEqual(source.queries, ["Longhorns game"], "a saved name never reaches the network")
+
+        await brain.hear(TranscriptSegment(text: "what's the Longhorns game", start: now, end: now, isFinal: true, speaker: .user))
+        XCTAssertEqual(vision.prompts.count, 2, "overheard chatter never triggers a search")
+        XCTAssertEqual(source.queries.count, 1)
+    }
+
+    func testExplicitSearchSkipsTheModel() async {
+        let source = FakeQuickFactSource()
+        source.facts["HackTX 2026"] = QuickFact(text: "HackTX is a 24-hour hackathon at UT Austin.", source: "web")
+        brain.quickFacts = QuickFacts(source: source)
+        await brain.ask("look up HackTX 2026")
+        XCTAssertEqual(vision.prompts.count, 0)
+        XCTAssertEqual(source.queries, ["HackTX 2026"])
+        XCTAssertEqual(speaker.texts, ["HackTX is a 24-hour hackathon at UT Austin."])
+        await brain.ask("look around")
+        XCTAssertEqual(vision.prompts.count, 1, "'look around' is still the surroundings command")
+        brain.quickFacts = nil
+        await brain.ask("google Tacodeli")
+        XCTAssertEqual(speaker.texts.last, Phrasebook.searchUnavailable)
+    }
+
     func testRenameWithoutANameAsksForIt() async {
         var renamed: [String] = []
         brain.rename = { renamed.append($0); return Phrasebook.renamed($0) }
