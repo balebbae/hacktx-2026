@@ -2,8 +2,9 @@ import Foundation
 
 /// Decides what, if anything, to say about a new vision reading. Pure with respect to `now`.
 ///
-///   path      blocked/caution within `alertMeters` (4 m) → priority 0 at once ("Wall ahead, 2 meters."); repeats every
-///             `pathRepeat` while it stays in the way; re-arms after `rearmClear` seconds of clear path.
+///   path      blocked/caution within `alertMeters` (4 m) → priority 0 at once ("Wall ahead, 2 meters."); repeats only
+///             while the wearer closes in (at least `approachMeters` nearer, `pathRepeat` apart), so sitting at a
+///             table is one alert, not one every few seconds; re-arms after `rearmClear` seconds of clear path.
 ///   hazards   within `hazardMeters` → priority 0, once per kind per `hazardCooldown`; at most one per reading.
 ///   gist      the model's one-line summary, priority 2, only when the scene changed (new place or a different set
 ///             of objects), at most every 20 s (normal) / 8 s (chatty), never in quiet mode, never while a
@@ -13,7 +14,8 @@ struct NarrationPolicy {
         /// Generous on purpose: a reading is about 2.5 s old when it arrives, and the wearer may be walking.
         var alertMeters = 4.0
         var hazardMeters = 4.0
-        var pathRepeat: TimeInterval = 8
+        var pathRepeat: TimeInterval = 4
+        var approachMeters = 1.0
         var rearmClear: TimeInterval = 3
         var hazardCooldown: TimeInterval = 10
         var gistNormal: TimeInterval = 20
@@ -23,6 +25,7 @@ struct NarrationPolicy {
 
     var config = Config()
     private var lastPathAlert: TimeInterval?
+    private var lastAlertMeters = Double.infinity
     private var clearSince: TimeInterval?
     private var hazardSpoken: [String: TimeInterval] = [:]
     private var lastGistAt: TimeInterval?
@@ -43,12 +46,13 @@ struct NarrationPolicy {
         let meters = r.pathMeters ?? (r.path == .blocked ? config.alertMeters : nil)
         guard r.path != .clear, let m = meters, m <= config.alertMeters else {
             if clearSince == nil { clearSince = now }
-            if let since = clearSince, now - since >= config.rearmClear { lastPathAlert = nil }
+            if let since = clearSince, now - since >= config.rearmClear { lastPathAlert = nil; lastAlertMeters = .infinity }
             return nil
         }
         clearSince = nil
-        if let last = lastPathAlert, now - last < config.pathRepeat { return nil }
+        if let last = lastPathAlert, now - last < config.pathRepeat || m > lastAlertMeters - config.approachMeters { return nil }
         lastPathAlert = now
+        lastAlertMeters = m
         return Self.alert(Phrasebook.pathAlert(what: r.pathWhat, bearing: r.bearing(r.pathX), meters: r.pathMeters), key: "path")
     }
 

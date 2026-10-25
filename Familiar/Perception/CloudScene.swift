@@ -231,6 +231,7 @@ final class CloudScene: @unchecked Sendable {
         defer { state.withLock { $0.inFlight = false } }
         guard let image = redact(latest.image), let jpeg = FrameRedactor.jpeg(image) else {
             state.withLock { $0.status.lastError = "face check unavailable: nothing uploaded" }
+            log.error("face check unavailable: nothing uploaded")
             return
         }
         state.withLock { $0.lastUpload = image; $0.status.uploads += 1 }
@@ -240,6 +241,7 @@ final class CloudScene: @unchecked Sendable {
                                                  schemaName: "SceneReading", schema: SceneReading.schema, maxTokens: 700, cacheKey: "poyo-scene-v1", timeout: 10)
             guard let reading = SceneReading(json: json, at: latest.t, hFOV: latest.hFOV) else { throw MetaModelClient.ClientError.malformed }
             state.withLock { $0.status.lastLatency = CACurrentMediaTime() - started; $0.status.lastError = nil }
+            log.info("scene \(reading.path.rawValue, privacy: .public) \(reading.pathMeters ?? -1) m in \(CACurrentMediaTime() - started, format: .fixed(precision: 1)) s: \(reading.summary, privacy: .public)")
             ingest(reading)
         } catch {
             log.error("scene reading failed: \(error.localizedDescription, privacy: .public)")

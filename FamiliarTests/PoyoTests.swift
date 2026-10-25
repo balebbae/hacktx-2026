@@ -10,17 +10,18 @@ final class NarrationPolicyTests: XCTestCase {
                      objects: objects.map { .init(name: $0, x: 0.8, meters: 4) }, summary: summary, hFOV: 53)
     }
 
-    func testWallAlertsAtOnceRepeatsWhileInTheWayAndRearmsWhenClear() {
+    func testWallAlertsAtOnceRepeatsOnlyWhileClosingInAndRearmsWhenClear() {
         var p = NarrationPolicy()
-        let wall = reading(.blocked, what: "wall", meters: 1.8)
-        let first = p.utterances(for: wall, mode: .normal, now: 0, inConversation: false)
-        XCTAssertEqual(first.map(\.text), ["Wall ahead, 2 meters."])
+        let first = p.utterances(for: reading(.blocked, what: "wall", meters: 3.4), mode: .normal, now: 0, inConversation: false)
+        XCTAssertEqual(first.map(\.text), ["Wall ahead, 3 meters."])
         XCTAssertEqual(first.first?.priority, 0)
-        XCTAssertNotEqual(p.utterances(for: wall, mode: .normal, now: 3, inConversation: false).first?.category, "hazard", "no repeat within 8 s")
-        XCTAssertEqual(p.utterances(for: wall, mode: .normal, now: 9, inConversation: true).map(\.text), ["Wall ahead, 2 meters."], "still in the way; even mid-conversation")
-        _ = p.utterances(for: reading(), mode: .quiet, now: 10, inConversation: false)
-        _ = p.utterances(for: reading(), mode: .quiet, now: 13.5, inConversation: false)
-        XCTAssertEqual(p.utterances(for: wall, mode: .quiet, now: 14, inConversation: false).map(\.text), ["Wall ahead, 2 meters."], "re-armed after 3 s clear")
+        XCTAssertNotEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 3.2), mode: .normal, now: 5, inConversation: false).first?.category, "hazard", "not closer: sitting still is one alert")
+        XCTAssertNotEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 2.2), mode: .normal, now: 2, inConversation: false).first?.category, "hazard", "closer but within 4 s")
+        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 1.2), mode: .normal, now: 6, inConversation: true).map(\.text), ["Wall ahead, close."], "closing in; even mid-conversation")
+        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 1.0), mode: .quiet, now: 20, inConversation: false), [])
+        _ = p.utterances(for: reading(), mode: .quiet, now: 21, inConversation: false)
+        _ = p.utterances(for: reading(), mode: .quiet, now: 24.5, inConversation: false)
+        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "chair", meters: 1.8), mode: .quiet, now: 25, inConversation: false).map(\.text), ["Chair ahead, 2 meters."], "re-armed after 3 s clear")
     }
 
     func testFarCautionIsNotAnAlert() {
