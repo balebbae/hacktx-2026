@@ -9,13 +9,15 @@ import os
 /// Route A `.phoneMicGlassesA2DP` (default): phone mic in, glasses as A2DP out; HFP stays closed for the glasses SDK.
 /// Route B `.glassesHFP`: glasses mic + speaker over HFP with voice processing. Refused while `glassesStreamActive`.
 /// `.phoneOnly`: no Bluetooth. `.glassesStreamMic` (S6) keeps the session like Route A; the mic comes from the SDK.
-final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
+final class AudioEngineController: NSObject, PCMPlayback, StreamingPCMPlayback, @unchecked Sendable {
     let rawInput: EngineAudioInput
     let transcriberInput: EngineAudioInput
     private(set) var route: AudioRoute
     /// Set by S6 while the glasses stream their mic; Route B is then refused.
     var glassesStreamActive = false
     var speakingTail: TimeInterval = 0.3
+    /// Audio held back before a stream starts playing, so a late chunk does not leave a gap mid-sentence.
+    var streamPrebuffer: TimeInterval = 0.3
     var isRunning: Bool { engine.isRunning }
     var lastError: String?
 
@@ -213,6 +215,68 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
             let c = s.continuation; s.continuation = nil; return c
         }
         cont?.resume(returning: completed)
+    }
+
+    // MARK: Streaming playback (StreamingPCMPlayback)
+
+    /// Schedules each chunk on the player node as it arrives (after `streamPrebuffer` worth is in hand) and returns
+    /// when the last scheduled buffer has played, the stream failed, or `stop()` cut it. Shares `playLock`'s
+    /// generation with `play`, so a priority-0 interruption stops a stream the same way.
+    func playStream(_ chunks: AsyncThrowingStream<[Float], Error>, sampleRate: Double, prefix: [Float], gain: Float, audience: Audience) async -> ClosedRange<TimeInterval>? {
+        guard engine.isRunning || (try? start()) != nil, engine.isRunning else { return nil }
+        let session = AVAudioSession.sharedInstance()
+        if audience == .otherPerson { try? session.overrideOutputAudioPort(.speaker) }
+        defer { if audience == .otherPerson { try? session.overrideOutputAudioPort(.none) } }
+
+        let generation: Int = playLock.withLock { s in s.generation += 1; return s.generation }
+        speakingState.withLock { $0.speaking = true }
+        let start = CACurrentMediaTime()
+        let state = OSAllocatedUnfairLock(initialState: StreamState(held: prefix))
+        let prebuffer = streamPrebuffer
+
+        let completed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+            playLock.withLock { $0.continuation = cont }
+            Task {
+                var failed = false
+                do {
+                    for try await chunk in chunks {
+                        guard self.playLock.withLock({ $0.generation == generation }) else { return }    // stopped
+                        let ready: [Float]? = state.withLock { s in
+                            s.held += chunk
+                            if !s.started, Double(s.held.count) / sampleRate < prebuffer { return nil }
+                            s.started = true
+                            defer { s.held.removeAll(keepingCapacity: true) }
+                            return s.held
+                        }
+                        if let ready { self.scheduleStreamed(ready, gain: gain, sampleRate: sampleRate, state: state, generation: generation) }
+                    }
+                } catch { failed = true }
+                guard self.playLock.withLock({ $0.generation == generation }) else { return }
+                let rest: [Float] = state.withLock { s in defer { s.held.removeAll() }; return s.held }
+                self.scheduleStreamed(rest, gain: gain, sampleRate: sampleRate, state: state, generation: generation)
+                let (allPlayed, seconds, any) = state.withLock { s -> (Bool, Double, Bool) in s.done = true; return (s.played >= s.scheduled, s.seconds, s.scheduled > 0) }
+                if allPlayed || !any { self.finishPlayback(generation: generation, completed: !failed && any); return }
+                // `.dataPlayedBack` never fires if the engine stops mid-buffer; never leave the speaker waiting.
+                try? await Task.sleep(for: .seconds(seconds + 2))
+                self.finishPlayback(generation: generation, completed: false)
+            }
+        }
+        let end = CACurrentMediaTime()
+        speakingState.withLock { $0.speaking = false; $0.until = end + speakingTail }
+        let any = state.withLock { $0.scheduled > 0 }
+        return completed || (any && end > start) ? start...end : nil
+    }
+
+    private struct StreamState { var held: [Float]; var started = false; var scheduled = 0; var played = 0; var done = false; var seconds = 0.0 }
+
+    private func scheduleStreamed(_ samples: [Float], gain: Float, sampleRate: Double, state: OSAllocatedUnfairLock<StreamState>, generation: Int) {
+        guard !samples.isEmpty, let buffer = makeBuffer(SynthesizedAudio(samples: gain == 1 ? samples : samples.map { $0 * gain }, sampleRate: sampleRate, source: "stream")) else { return }
+        state.withLock { $0.scheduled += 1; $0.seconds += Double(buffer.frameLength) / buffer.format.sampleRate }
+        player.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            let last = state.withLock { s -> Bool in s.played += 1; return s.done && s.played >= s.scheduled }
+            if last { self?.finishPlayback(generation: generation, completed: true) }
+        }
+        if !player.isPlaying { player.play() }
     }
 
     /// PCMPlayback: cut the current utterance short.

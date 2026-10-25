@@ -94,24 +94,45 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, 12 o'clock, close. No one else. Kitchen.")
     }
 
-    func testContactOfferNeedsTheSameNewPersonFaceToFaceFor20Seconds() async {
+    func testContactOfferNeedsSomeoneNewFaceToFaceFor20SecondsAcrossTrackChurn() async {
         router.startObserving()
-        let stranger = FakePerception.track(5, distance: .close)
-        perception.tracks = [stranger]
-        func see() async { perception.publish(.snapshot(tracks: [stranger], preview: nil)); try? await Task.sleep(nanoseconds: 50_000_000) }
-        await see()
+        func see(_ tracks: [TrackSnapshot]) async {
+            perception.tracks = tracks
+            perception.publish(.snapshot(tracks: tracks, preview: nil))
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        await see([FakePerception.track(5)])
         await router.conversationDetected(at: now)
         XCTAssertEqual(flow.begins, [], "a face that just turned up is not a conversation partner")
-        now += 21
-        await see()
+        // 24 s of the same person whose face drops out for 4 s and comes back under new track ids (device logs).
+        for (dt, id) in [(4.0, 5), (2.0, 0), (2.0, 6), (4.0, 6), (4.0, 7), (4.0, 7), (4.0, 7)] as [(TimeInterval, Int)] {
+            now += dt
+            await see(id == 0 ? [] : [FakePerception.track(id)])
+        }
         await router.conversationDetected(at: now)
         try? await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(flow.begins, [true])
         now += 400
-        await see()
+        for _ in 0..<6 { now += 4; await see([FakePerception.track(8)]) }
         await router.conversationDetected(at: now)
         try? await Task.sleep(nanoseconds: 100_000_000)
-        XCTAssertEqual(flow.begins, [true], "offered once per person")
+        XCTAssertEqual(flow.begins, [true], "offered once per person, even under a new track id")
+        router.stop()
+    }
+
+    func testContactOfferStartsOverWhenTheyWalkOff() async {
+        router.startObserving()
+        func see(_ tracks: [TrackSnapshot]) async {
+            perception.tracks = tracks
+            perception.publish(.snapshot(tracks: tracks, preview: nil))
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        for _ in 0..<4 { await see([FakePerception.track(5)]); now += 4 }
+        await see([])
+        now += 6; await see([])                                          // gone 10 s: a different stretch
+        for _ in 0..<2 { now += 4; await see([FakePerception.track(9)]) }
+        await router.conversationDetected(at: now)
+        XCTAssertEqual(flow.begins, [])
         router.stop()
     }
 

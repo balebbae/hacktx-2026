@@ -3,8 +3,9 @@ import QuartzCore
 import os
 
 /// Poyo's answers. One multimodal call per question: the current view (faces blacked out), what the phone knows
-/// (`WorldModel.contextLine`), the last 30 s of speech and the question → `{say, action}`. Built-in commands never
-/// leave the phone; actions run through `CommandRouter`, so consent still belongs to the other person.
+/// (`WorldModel.contextLine`), what was said lately (`DialogueMemory`, as chat turns), the last 30 s of speech and
+/// the question → `{say, action}`. Built-in commands never leave the phone; actions run through `CommandRouter`,
+/// so consent still belongs to the other person.
 @MainActor
 final class PoyoBrain: ObservableObject {
     @Published private(set) var lines: [AgentLine] = [] {
@@ -21,6 +22,7 @@ final class PoyoBrain: ObservableObject {
     private let speaker: Speaker
     private let cueGate: CueGate
     private let router: CommandRouter
+    let dialogue: DialogueMemory
     private let userName: () -> String
     private let knownNames: () -> [String]
     private let log = Logger(subsystem: "familiar", category: "brain")
@@ -29,25 +31,36 @@ final class PoyoBrain: ObservableObject {
     /// Recent action captions ("Someone crossing, left to right, close."), so "what's going on?" has motion.
     var actions: () -> String? = { nil }
     var wakeWordCollecting: () -> Bool = { false }
+    /// Someone in view is visibly talking to the wearer right now: a sentence in the follow-up window is theirs,
+    /// not a question for Poyo. Set by `FlowRuntime` from perception.
+    var someoneElseTalking: () -> Bool = { false }
     /// Re-transcribes the seconds where a name is said (on-device recognition turns "Jagadeep" into "JD").
     var scribe: ScribeTranscriber?
     var audio: AudioChunkClipRecorder?
     /// Renames the remembered person in view (or the one just saved); returns what to say. Set by `FlowRuntime`.
     var rename: (String) async -> String = { _ in Phrasebook.nobodyToUpdate }
+    /// After a question Poyo asked ("Which door, the left one?"): the next sentence is the reply, whatever it sounds like.
     var followUpWindow: TimeInterval = 8
+    /// After a plain answer: a follow-up that sounds like one ("which side is the door?", "and the window?").
+    var plainFollowUpWindow: TimeInterval = 6
     var listenWindow: TimeInterval = 8
     var clock: () -> TimeInterval = { CACurrentMediaTime() }
+    /// How many earlier turns the model sees.
+    var historyTurns = 8
+    /// Inner-lip gap ÷ face height above which a mouth in view counts as talking (a talking mouth swings 0 → 0.12).
+    static let talkingMouth = 0.06
 
     private var followUpUntil: TimeInterval = -.infinity
+    /// The open window is after a plain answer: the sentence must sound like a follow-up and nobody else may be talking.
+    private var followUpNeedsRequest = false
     /// Poyo just asked "What's their name?": the next sentence is the new name.
     private var awaitingNameUntil: TimeInterval = -.infinity
-    private var lastAnswer: String?
     private var current: Task<Void, Never>?
 
     init(vision: VisionLLM, scene: CloudScene, perception: Perception, transcriber: Transcriber, speaker: Speaker, cueGate: CueGate, router: CommandRouter,
-         userName: @escaping () -> String, knownNames: @escaping () -> [String]) {
+         dialogue: DialogueMemory = DialogueMemory(), userName: @escaping () -> String, knownNames: @escaping () -> [String]) {
         self.vision = vision; self.scene = scene; self.perception = perception; self.transcriber = transcriber; self.speaker = speaker
-        self.cueGate = cueGate; self.router = router; self.userName = userName; self.knownNames = knownNames
+        self.cueGate = cueGate; self.router = router; self.dialogue = dialogue; self.userName = userName; self.knownNames = knownNames
     }
 
     func start(speech: AsyncStream<TranscriptSegment>, unparsed: AsyncStream<String>?) -> [Task<Void, Never>] {
@@ -69,11 +82,16 @@ final class PoyoBrain: ObservableObject {
         if now <= awaitingNameUntil {
             awaitingNameUntil = -.infinity
             lines.append(AgentLine(role: .user, text: text))
+            dialogue.record(.wearer, text, at: now)
             let heard = await scribe?.retranscribe(audio, from: seg.start, to: seg.end) ?? text
             guard let name = Self.spokenName(in: heard) ?? Self.spokenName(in: text) else { await say(Phrasebook.didNotGetThat); return }
             await renameAndSay(name)
         } else if now <= followUpUntil {
-            followUpUntil = -.infinity                  // one reply, then back to silence
+            let needsRequest = followUpNeedsRequest
+            followUpUntil = -.infinity                  // one sentence, then back to silence
+            // After a plain answer only a sentence that sounds like a follow-up counts, and not while someone in view
+            // is visibly talking to the wearer: in a packed room that sentence is theirs.
+            if needsRequest, !Self.soundsLikeFollowUp(text) || someoneElseTalking() { return }
             await ask(text)
         }
     }
@@ -81,12 +99,26 @@ final class PoyoBrain: ObservableObject {
     /// Push-to-talk (volume button): the next sentence within `listenWindow` is for Poyo, no wake word needed.
     func listenNext() {
         followUpUntil = clock() + listenWindow
+        followUpNeedsRequest = false
         lines.append(AgentLine(role: .app, text: "listening"))
     }
 
-    /// A reply is expected only when Poyo asked something ("Which door, the left one?").
-    private func noteAnswered() {
-        followUpUntil = (lastAnswer?.hasSuffix("?") ?? false) ? clock() + followUpWindow : -.infinity
+    /// After every addressed answer the wearer may go on without the name: any sentence when Poyo asked something,
+    /// a shorter window for request-like follow-ups after a plain answer. The window only opens because Poyo was
+    /// addressed, so it never joins a conversation on its own.
+    private func noteAnswered(asked: Bool) {
+        followUpUntil = clock() + (asked ? followUpWindow : plainFollowUpWindow)
+        followUpNeedsRequest = !asked
+    }
+
+    private static let followUpOpener = try! NSRegularExpression(pattern: "^(?:(?:and|ok|okay|also|which|what about|how about) \\S|thanks|thank you)")
+
+    /// "which side is the door", "and the window?", "what about the table", "ok where's the exit" — but not "yeah"
+    /// or "nice to meet you".
+    static func soundsLikeFollowUp(_ text: String) -> Bool {
+        if QuestionFilter.isRequestLike(text) { return true }
+        let s = CommandParser.normalize(text)
+        return !s.isEmpty && followUpOpener.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
     }
 
     /// A request addressed to Poyo ("Poyo, …" that the parser did not recognise, a follow-up, or a button).
@@ -97,6 +129,7 @@ final class PoyoBrain: ObservableObject {
         // The name is re-transcribed from the audio, which spells unusual names far better.
         if addressed, let name = Self.renameTarget(in: text) {
             lines.append(AgentLine(role: .user, text: text))
+            dialogue.record(.wearer, text, at: clock())
             var better: String?
             if let seg = transcriber.recentSegments(seconds: 15).last(where: { $0.isFinal && WakeWord.find(in: $0.text) != nil }),
                let heard = await scribe?.retranscribe(audio, from: seg.start, to: seg.end) {
@@ -109,6 +142,7 @@ final class PoyoBrain: ObservableObject {
         if addressed, Self.isRenameRequest(text) {
             lines.append(AgentLine(role: .user, text: text))
             lines.append(AgentLine(role: .agent, text: Phrasebook.whatName))
+            dialogue.record(.wearer, text, at: clock())
             await say(Phrasebook.whatName)
             awaitingNameUntil = clock() + 10
             return
@@ -117,8 +151,9 @@ final class PoyoBrain: ObservableObject {
         if addressed, let c = CommandParser.parse(text), c != .describeSurroundings {
             lines.append(AgentLine(role: .user, text: text))
             lines.append(AgentLine(role: .tool, text: "command \(c)"))
+            dialogue.record(.wearer, text, at: clock())
             await router.handle(c)
-            noteAnswered()
+            noteAnswered(asked: false)
             return
         }
         // "What's around me?" with a scene reading under 4 s old: answer at once from it (people from the phone,
@@ -129,8 +164,9 @@ final class PoyoBrain: ObservableObject {
             lines.append(AgentLine(role: .user, text: text))
             lines.append(AgentLine(role: .agent, text: line))
             let t0 = clock()
+            dialogue.record(.wearer, text, at: t0)
             if let start = await say(line)?.lowerBound { lastLatency = start - t0 }
-            noteAnswered()
+            noteAnswered(asked: false)
             return
         }
         current?.cancel()                       // the newest question wins
@@ -150,7 +186,11 @@ final class PoyoBrain: ObservableObject {
         let t0 = clock()
         busy = true
         defer { busy = false }
-        let snapshot = scene.redactedSnapshot()
+        // What was said before this question, as chat turns; then the question itself becomes a turn.
+        let history = DialogueMemory.messages(dialogue.turns(now: t0, limit: historyTurns))
+        if addressed { dialogue.record(.wearer, text, at: t0) }
+        let snapshot = await scene.redactedSnapshot()
+        guard !Task.isCancelled else { return }
         let known = knownNames()
         let speech = transcriber.recentSegments(seconds: 30).filter(\.isFinal).suffix(8)
             .map { "\($0.speaker == .other ? "Other" : "Wearer"): \($0.text)" }.joined(separator: "\n")
@@ -158,12 +198,12 @@ final class PoyoBrain: ObservableObject {
         Wearer: \(userName()). People you may name: \(known.isEmpty ? "none" : known.joined(separator: ", ")).
         Now: \(WorldModel.contextLine(tracks: perception.currentTracks(), reading: scene.reading, now: t0, actions: actions()))\(snapshot == nil ? " (no image right now)" : "")
         Recent speech:
-        \(speech.isEmpty ? "(none)" : speech)\(lastAnswer.map { "\nYou last said: \($0)" } ?? "")
+        \(speech.isEmpty ? "(none)" : speech)
         \(addressed ? "[to you]" : "[overheard]") \(text)
         """
         let json: [String: Any]
         do {
-            json = try await vision.complete(system: Self.systemPrompt, text: prompt, imageJPEG: snapshot?.jpeg, schemaName: "PoyoReply", schema: Self.schema,
+            json = try await vision.complete(system: Self.systemPrompt, history: history, text: prompt, imageJPEG: snapshot?.jpeg, schemaName: "PoyoReply", schema: Self.schema,
                                              maxTokens: 700, cacheKey: "poyo-brain-v1", timeout: 10)
         } catch {
             log.error("brain failed: \(error.localizedDescription, privacy: .public)")
@@ -180,7 +220,7 @@ final class PoyoBrain: ObservableObject {
         if addressed, let command = Self.command(action: json["action"] as? String, name: json["name"] as? String, mode: json["mode"] as? String) {
             lines.append(AgentLine(role: .tool, text: "\(command)"))
             await router.handle(command)          // speaks its own confirmation; remember starts the consent flow
-            noteAnswered()
+            noteAnswered(asked: false)
             return
         }
         guard let line = SpeechSanitizer.clean(json["say"] as? String) else {
@@ -188,18 +228,16 @@ final class PoyoBrain: ObservableObject {
             return
         }
         lines.append(AgentLine(role: .agent, text: line))
-        lastAnswer = line
-        defer { noteAnswered() }
         let window = await say(line, priority: addressed ? 0 : 1)
         if let start = window?.lowerBound { lastLatency = start - t0 }
-        noteAnswered()
+        if addressed { noteAnswered(asked: line.hasSuffix("?")) }
     }
 
     private func renameAndSay(_ name: String) async {
         let reply = await rename(name)
         lines.append(AgentLine(role: .tool, text: "rename → \(reply)"))
         await say(reply)
-        noteAnswered()
+        noteAnswered(asked: false)
     }
 
     private static let renamePatterns: [NSRegularExpression] = [
@@ -240,7 +278,9 @@ final class PoyoBrain: ObservableObject {
     private func say(_ text: String, priority: Int = 0) async -> ClosedRange<TimeInterval>? {
         let u = Utterance(text: text, priority: priority, category: "agent", personID: nil, dedupeKey: priority == 0 ? nil : "agent", audience: .user, earcon: false)
         guard cueGate.admit(u) else { return nil }
-        return await speaker.speak(u)
+        let window = await speaker.speak(u)
+        if window != nil { dialogue.record(.poyo, text, at: clock()) }   // the speaker hook records it too; same turn
+        return window
     }
 
     static func command(action: String?, name: String?, mode: String?) -> Command? {
@@ -274,6 +314,9 @@ final class PoyoBrain: ObservableObject {
     body, age, gender or mood.
     The "Now:" line comes from the phone's own sensors: trust it for who is here and where. Only the people listed \
     under "People you may name" may be named, and only where "Now" places them; anyone else is "someone".
+    Earlier turns are what you and the wearer said in the last few minutes; your own turns include the automatic \
+    announcements the app made in your voice (who appeared or left, obstacles, alerts). Use them to resolve "he", \
+    "that door", "which side"; do not repeat them unless asked.
     Read signs, screens and labels when asked, but never name badges or text on a person.
     [to you] messages are addressed to you: always answer. [overheard] messages are the wearer talking to someone \
     else: set say to SKIP unless they clearly asked something you can answer from what you see.

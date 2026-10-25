@@ -11,7 +11,7 @@ final class CuePolicyTests: XCTestCase {
         XCTAssertEqual(first.map(\.text), ["Marcus, 1 o'clock, far."])
         XCTAssertEqual(first.first?.priority, 1)
         XCTAssertEqual(first.first?.personID, marcus)
-        XCTAssertEqual(first.first?.earcon, true)
+        XCTAssertEqual(first.first?.earcon, false, "the chime is for safety alerts and 'heard you' only")
         XCTAssertEqual(policy.utterances(for: .knownAppeared(t), mode: .normal, now: 25), [])
         XCTAssertEqual(policy.utterances(for: .knownAppeared(t), mode: .normal, now: 41).count, 1)
     }

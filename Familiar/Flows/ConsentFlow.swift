@@ -295,7 +295,7 @@ final class SpokenConsentFlow: ConsentFlow {
             try? peopleStore.add(person)
         }
         cueGate.consentActive = false
-        await speaker.speak(Utterance(text: Phrasebook.saved(name: finalName), priority: 0, category: "consent", personID: id, dedupeKey: nil, audience: .user, earcon: true))
+        await speaker.speak(Utterance(text: Phrasebook.saved(name: finalName), priority: 0, category: "consent", personID: id, dedupeKey: nil, audience: .user, earcon: false))
         nameGuess?.reset()
         finish(.done(person))
     }

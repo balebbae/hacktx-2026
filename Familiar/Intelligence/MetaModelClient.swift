@@ -28,7 +28,7 @@ final class MetaModelClient: @unchecked Sendable {
     let safetyIdentifier: String
     private(set) var lastRawResponse: String?
 
-    init(apiKey: String?, session: URLSession = MetaModelClient.makeSession(), safetyIdentifier: String = MetaModelClient.defaultSafetyIdentifier()) {
+    init(apiKey: String?, session: URLSession = MetaModelClient.sharedSession, safetyIdentifier: String = MetaModelClient.defaultSafetyIdentifier()) {
         self.apiKey = apiKey
         self.session = session
         self.safetyIdentifier = safetyIdentifier
@@ -42,6 +42,10 @@ final class MetaModelClient: @unchecked Sendable {
         c.timeoutIntervalForRequest = 20
         return URLSession(configuration: c)
     }
+
+    /// One session for every Meta Model API client (names, yes/no, scene readings, Poyo), so the TLS handshake
+    /// `warmUp()` pays at launch is the only one, and the first question does not pay it again.
+    static let sharedSession = makeSession()
 
     static func defaultSafetyIdentifier() -> String {
         let raw = UIDevice.current.identifierForVendor?.uuidString ?? "simulator"

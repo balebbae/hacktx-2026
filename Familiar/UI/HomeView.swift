@@ -11,7 +11,6 @@ struct HomeView: View {
     @State private var showDetail = false
     @State private var previewConsentCard = ProcessInfo.processInfo.arguments.contains("-demoConsentCard")
     @State private var selfEnroll: SelfEnrollModel?
-    @StateObject private var nfc = NFCTagReader()
 
     var body: some View {
         NavigationStack {
@@ -48,14 +47,8 @@ struct HomeView: View {
                     .disabled(coordinator.services == nil || runtime.showsConsentCard)
                     .accessibilityLabel("Introduce yourself")
                     .accessibilityHint("Hand the phone to the person in front of you. They scan their face, type their name and tap yes themselves")
-                    if NFCTagReader.isAvailable {
-                        Button { nfc.scan { url in coordinator.handle(url: url) } } label: { Label("Scan tag", systemImage: "wave.3.right.circle") }
-                            .disabled(nfc.isScanning)
-                            .accessibilityHint("Hold the phone near an NFC tag that opens the introduce screen")
-                    }
-                    if let st = nfc.status { Text(st).font(.footnote).foregroundStyle(.secondary).accessibilityLabel("Tag: \(st)") }
                 } footer: {
-                    Text("Anyone can introduce themselves on this phone, or tap an NFC tag that opens familiar://introduce.")
+                    Text("Anyone can introduce themselves on this phone. A link to familiar://introduce opens the same screen.")
                 }
                 Section("Source") {
                     Picker("Source", selection: $state.source) {

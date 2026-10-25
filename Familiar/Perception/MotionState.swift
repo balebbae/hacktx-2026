@@ -5,15 +5,20 @@ import os
 
 /// Is the wearer walking? Wall and hazard alerts only matter then; standing still (talking, sitting at a table)
 /// they are noise. Two signals, either is enough: the phone's own motion (it rides in a pocket or hand; no
-/// permission needed for raw device motion) and the camera view expanding forward (`noteExpansion`).
+/// permission needed for raw device motion) and the camera view steadily expanding forward (`noteExpansion`).
+/// Every switch to "walking" is logged with its cause, so a device log shows why an alert played.
 final class MotionState: @unchecked Sendable {
-    /// RMS of user acceleration (g) over `window` above which the phone counts as walking.
-    var walkingRMS = 0.07
-    /// Mean inverse time-to-contact (1/s) of the centre of view above which the wearer moves toward something.
-    var expansionRate = 0.25
+    /// RMS of user acceleration (g) over `window` above which the phone counts as walking. Walking with the phone in a
+    /// pocket or hand reads 0.15–0.4 g; holding it while talking 0.02–0.1 g.
+    var walkingRMS = 0.15
+    /// Mean signed inverse time-to-contact (1/s) of the centre of view above which the wearer moves toward something…
+    var expansionRate = 0.3
+    /// …with at least this share of the samples expanding (a nod or someone leaning in is one or two samples).
+    var expansionShare = 0.75
     var window: TimeInterval = 2
     /// Stays "moving" this long after the last moving sample, so a pause in stride does not drop alerts.
     var hold: TimeInterval = 1.5
+    var log: (String) -> Void = { DiagnosticLog.write($0) }
 
     private let manager = CMMotionManager()
     private let queue = OperationQueue()
@@ -32,24 +37,37 @@ final class MotionState: @unchecked Sendable {
     func stop() { manager.stopDeviceMotionUpdates() }
 
     func noteAcceleration(_ g: Double, at t: TimeInterval) {
-        state.withLock { s in
+        let started: String? = state.withLock { s in
             s.accel.append((t, g))
             s.accel.removeAll { $0.t < t - window }
-            guard s.accel.count >= 10 else { return }
+            guard s.accel.count >= 10 else { return nil }
             let rms = (s.accel.reduce(0) { $0 + $1.g * $1.g } / Double(s.accel.count)).squareRoot()
-            if rms > walkingRMS { s.movingUntil = max(s.movingUntil, t + hold) }
+            guard rms > walkingRMS else { return nil }
+            return Self.extend(&s, t + hold, now: t) ? String(format: "motion: walking (phone %.2f g)", rms) : nil
         }
+        if let started { log(started) }
     }
 
-    /// Inverse time-to-contact of the centre of view (0 when nothing approaches), from `SceneAwareness` at ~4 Hz.
+    /// Signed inverse time-to-contact of the centre of view (1/s, negative = receding), from `SceneAwareness` at ~4 Hz.
     func noteExpansion(_ rate: Double, at t: TimeInterval) {
-        state.withLock { s in
+        let started: String? = state.withLock { s in
             s.expansion.append((t, rate))
             s.expansion.removeAll { $0.t < t - window }
-            guard s.expansion.count >= 4 else { return }
-            if s.expansion.reduce(0, { $0 + $1.rate }) / Double(s.expansion.count) > expansionRate { s.movingUntil = max(s.movingUntil, t + hold) }
+            guard s.expansion.count >= 6 else { return nil }
+            let mean = s.expansion.reduce(0, { $0 + $1.rate }) / Double(s.expansion.count)
+            let share = Double(s.expansion.filter { $0.rate > 0 }.count) / Double(s.expansion.count)
+            guard mean > expansionRate, share >= expansionShare else { return nil }
+            return Self.extend(&s, t + hold, now: t) ? String(format: "motion: walking (view expanding %.2f/s)", mean) : nil
         }
+        if let started { log(started) }
     }
 
     func isMoving(at t: TimeInterval = CACurrentMediaTime()) -> Bool { state.withLock { t <= $0.movingUntil } }
+
+    /// Extends the moving window; true when the wearer was still before.
+    private static func extend(_ s: inout State, _ until: TimeInterval, now: TimeInterval) -> Bool {
+        let wasStill = now > s.movingUntil
+        s.movingUntil = max(s.movingUntil, until)
+        return wasStill
+    }
 }

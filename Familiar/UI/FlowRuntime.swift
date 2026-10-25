@@ -13,6 +13,7 @@ enum UserSettings {
     static let selfEnrollUseFixture = "selfEnrollUseFixture"   // S10: enroll_marcus clip instead of the front camera
     static let userVoiceRMS = "userVoiceRMS"                  // Float from Settings → Calibrate my voice
     static let assistantBrain = "assistantBrain"              // "vision" (default: Poyo on the vision model) | "elevenlabs"
+    static let streamingTTS = "streamingTTS"                  // Bool, default true: play ElevenLabs audio as it streams in
 }
 
 /// UI-side owner of the S4 modules. Until S5 wires `Services.make`, the coordinator hands us the S1 stand-ins
@@ -98,6 +99,7 @@ final class FlowRuntime: ObservableObject {
         let surroundings: (String?) -> String = { [weak scene = s.scene] people in scene?.describe(people: people) ?? (people ?? Phrasebook.nothingToName) }
         let r = FlowFactory.makeCommandRouter(perception: s.perception, speaker: s.speaker, cueGate: s.cueGate, consentFlow: flow, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m })
         r.surroundings = surroundings
+        r.dialogue = s.dialogue
         r.startObserving()
         r.attach(sources: s.commandSources + [manualCommands])
         // "Nice to meet you" / "see you" with a stranger close → "Want to remember them?"
@@ -122,7 +124,15 @@ final class FlowRuntime: ObservableObject {
             for await st in flow.subscribe() { await MainActor.run { self?.consentState = st; if case let .done(p) = st { self?.lastSaved = p } } }
         })
         tasks.append(Task { [weak self] in
-            for await _ in store.changes() { await MainActor.run { self?.people = store.all() } }
+            var warmed = Set(store.all().map(\.name))
+            for await _ in store.changes() {
+                let people = store.all()
+                await MainActor.run { self?.people = people }
+                // Someone was saved or renamed: their cues must play in Poyo's voice the first time, not Apple's.
+                let fresh = Set(people.map(\.name)).subtracting(warmed)
+                warmed.formUnion(fresh)
+                if !fresh.isEmpty { Task.detached(priority: .utility) { await s.speaker.prewarm(Phrasebook.prewarmSet(names: Array(fresh))) } }
+            }
         })
         people = store.all()
 
@@ -140,18 +150,25 @@ final class FlowRuntime: ObservableObject {
             // "Heard you": a chime the moment a request is complete, cutting off whatever was playing.
             tasks.append(Task { [weak speaker = s.speaker] in
                 for await hit in wake.subscribeHits() {
-                    DiagnosticLog.write("wake hit: \(hit.text) → \(hit.command.map { "\($0)" } ?? "Poyo")")
-                    await speaker?.speak(.heardYou)
+                    DiagnosticLog.write("wake hit\(hit.isCorrection ? " (correction)" : ""): \(hit.text) → \(hit.command.map { "\($0)" } ?? "Poyo")")
+                    if !hit.isCorrection { await speaker?.speak(.heardYou) }
                 }
             })
         }
         if UserDefaults.standard.string(forKey: UserSettings.assistantBrain) != "elevenlabs", s.cloudScene.isConfigured {
             // Poyo on the vision model: sees the (redacted) view itself, one call per question.
             let b = PoyoBrain(vision: s.cloudScene.client, scene: s.cloudScene, perception: s.perception, transcriber: s.transcriber, speaker: s.speaker, cueGate: s.cueGate, router: r,
-                              userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) })
+                              dialogue: s.dialogue, userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) })
             b.consentActive = session.consentActive
             b.actions = { [weak scene = s.scene] in scene?.currentActions() }
             b.wakeWordCollecting = session.wakeWordCollecting
+            // A follow-up without the name is taken only when nobody in view is visibly talking to the wearer:
+            // the voice split cannot tell who spoke, but a near, facing face with its mouth moving can.
+            b.someoneElseTalking = { [weak perception = s.perception] in
+                guard let perception else { return false }
+                if let active = (perception as? PerceptionPipeline)?.activeSpeaker, active.otherIsSpeaking(at: CACurrentMediaTime()) { return true }
+                return perception.currentTracks().contains { $0.isFacingUser && $0.distance != .far && ($0.mouthOpenness ?? 0) >= PoyoBrain.talkingMouth }
+            }
             b.scribe = ScribeTranscriber()
             b.audio = clipRecorder
             b.rename = { [weak self] name in await self?.renameCurrentPerson(to: name) ?? Phrasebook.nobodyToUpdate }

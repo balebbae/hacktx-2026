@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
     @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
+    @AppStorage(UserSettings.streamingTTS) private var streamingTTS = true
     @State private var confirmReset = false
     @State private var calibrating = false
     @State private var calibration: String?
@@ -29,6 +30,9 @@ struct SettingsView: View {
                     Text("ElevenLabs").tag("elevenlabs"); Text("Apple").tag("apple")
                 }
                 .accessibilityHint("ElevenLabs falls back to the Apple voice when slow")
+                Toggle("Stream speech (faster)", isOn: $streamingTTS)
+                    .accessibilityHint("Plays each answer as it is synthesized instead of waiting for the whole clip. Turn off if speech stutters.")
+                    .onChange(of: streamingTTS) { _, on in (coordinator.services?.speaker as? VoiceSpeaker)?.streaming = on }
                 Picker("Audio route", selection: $audioRoute) {
                     Text("Automatic").tag("auto"); Text("Phone mic + glasses").tag("phoneMicGlassesA2DP"); Text("Glasses HFP").tag("glassesHFP"); Text("Phone only").tag("phoneOnly")
                 }
