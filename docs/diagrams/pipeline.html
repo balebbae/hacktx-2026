@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>From a frame to a spoken cue</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --color-paper: #f5f5f5; --color-ink: #2d3142; --color-muted: #4f5d75; --color-accent: #bf4520;
+      --font-sans: 'Geist', system-ui, sans-serif; --font-serif: 'Instrument Serif', serif; --font-mono: 'Geist Mono', ui-monospace, monospace; }
+    body { font-family: var(--font-sans); background: var(--color-paper); color: var(--color-ink); min-height: 100vh;
+      display: flex; align-items: center; justify-content: center; padding: 3rem 2rem; }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em; text-transform: uppercase; color: var(--color-muted); margin-bottom: 0.5rem; }
+    h1 { font-family: var(--font-serif); font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem); font-weight: 400; letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 1.5rem; }
+    svg { width: 100%; min-width: 1000px; display: block; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Perception · Familiar</p>
+    <h1>From a frame to a spoken cue</h1>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 500" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="pipeline-title pipeline-desc">
+        <title id="pipeline-title">From a frame to a spoken cue</title>
+        <desc id="pipeline-desc">Each frame is detected, tracked, aligned and embedded on device, matched against consented people with a threshold and margin, placed on a clock face, then turned into short utterances that pass a cue gate before being spoken.</desc>
+        <defs>
+          <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.9" fill="rgba(45,49,66,0.10)"/></pattern>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#bf4520"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/></marker>
+          <marker id="arrow-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0, 8 3, 0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <rect width="100%" height="100%" fill="url(#dots)" opacity="0.55"/>
+<!-- arrows -->
+<path d="M 200,144 H 248" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 384,144 H 432" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 568,144 H 616" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 752,144 H 800" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 868,176 V 288" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 800,320 H 752" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 616,320 H 568" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 432,320 H 384" fill="none" stroke="#bf4520" stroke-width="1.4" marker-end="url(#arrow-accent)"/>
+<!-- labels -->
+<rect x="876.0" y="226" width="56" height="12" rx="2" fill="#f5f5f5"/>
+<text x="904" y="235" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">IDENTITY</text>
+<!-- nodes -->
+<rect x="64" y="112" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="64" y="112" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="72" y="120" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="80.5" y="129" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">1</text>
+<text x="132.0" y="145.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Detect</text>
+<text x="132.0" y="161.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Vision · faces</text>
+<rect x="248" y="112" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="248" y="112" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="256" y="120" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="264.5" y="129" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">2</text>
+<text x="316.0" y="145.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Track</text>
+<text x="316.0" y="161.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">stable track ids</text>
+<rect x="432" y="112" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="432" y="112" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="440" y="120" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="448.5" y="129" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">3</text>
+<text x="500.0" y="145.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Align</text>
+<text x="500.0" y="161.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5-point · 112 px</text>
+<rect x="616" y="112" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="616" y="112" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="624" y="120" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="632.5" y="129" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">4</text>
+<text x="684.0" y="145.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Embed</text>
+<text x="684.0" y="161.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">w600k_mbf · ONNX</text>
+<rect x="800" y="112" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="800" y="112" width="136" height="64" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<rect x="808" y="120" width="17" height="12" rx="2" fill="transparent" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+<text x="816.5" y="129" fill="#bf4520" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">5</text>
+<text x="868.0" y="145.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Match</text>
+<text x="868.0" y="161.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">0.40 · margin 0.08</text>
+<rect x="800" y="288" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="800" y="288" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="808" y="296" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="816.5" y="305" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">6</text>
+<text x="868.0" y="321.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Spatial</text>
+<text x="868.0" y="337.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">clock · range · motion</text>
+<rect x="616" y="288" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="616" y="288" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="624" y="296" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="632.5" y="305" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">7</text>
+<text x="684.0" y="321.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">CuePolicy</text>
+<text x="684.0" y="337.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">pure · per mode</text>
+<rect x="432" y="288" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="432" y="288" width="136" height="64" rx="6" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<rect x="440" y="296" width="17" height="12" rx="2" fill="transparent" stroke="rgba(191,69,32,0.50)" stroke-width="0.8"/>
+<text x="448.5" y="305" fill="#bf4520" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">8</text>
+<text x="500.0" y="321.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">CueGate</text>
+<text x="500.0" y="337.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">mute · consent · talk</text>
+<rect x="248" y="288" width="136" height="64" rx="6" fill="#f5f5f5"/>
+<rect x="248" y="288" width="136" height="64" rx="6" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<rect x="256" y="296" width="17" height="12" rx="2" fill="transparent" stroke="rgba(45,49,66,0.40)" stroke-width="0.8"/>
+<text x="264.5" y="305" fill="#2d3142" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">9</text>
+<text x="316.0" y="321.0" fill="#2d3142" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Speaker</text>
+<text x="316.0" y="337.0" fill="#4f5d75" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">ElevenLabs · Apple</text>
+<text x="64" y="400" fill="#4f5d75" font-size="12" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">Below the threshold or margin a face stays unknown and is only ever “someone”.</text>
+<text x="64" y="420" fill="#4f5d75" font-size="12" font-style="italic" font-family="'Instrument Serif', serif" text-anchor="start">Priority 0 hazards skip the gate and interrupt anything else.</text>
+<line x1="40" y1="444" x2="960" y2="444" stroke="rgba(45,49,66,0.10)" stroke-width="0.8"/>
+<text x="40" y="460" fill="#4f5d75" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.18em">LEGEND</text>
+<rect x="40" y="470" width="14" height="10" rx="2" fill="rgba(191,69,32,0.08)" stroke="#bf4520" stroke-width="1"/>
+<text x="60" y="476" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Decision point</text>
+<rect x="158" y="470" width="14" height="10" rx="2" fill="#ffffff" stroke="#2d3142" stroke-width="1"/>
+<text x="178" y="476" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">On-device stage</text>
+<line x1="281" y1="474" x2="309" y2="474" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#arrow)"/>
+<text x="317" y="476" fill="#4f5d75" font-size="8.5" font-family="'Geist', sans-serif">Data</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>
