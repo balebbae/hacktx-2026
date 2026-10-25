@@ -54,6 +54,64 @@ final class FakePlayback: PCMPlayback, @unchecked Sendable {
     func stop() { lock.lock(); stopCount += 1; generation += 1; lock.unlock() }
 }
 
+/// Streams fixed chunks; `failStream` makes the stream fail before its first chunk, `cached` texts return nil.
+final class FakeStreamingSynth: SpeechSynthesizer, StreamingSpeechSynthesizer, @unchecked Sendable {
+    let id = "stream"
+    var chunks: [[Float]] = [[Float](repeating: 0.2, count: 1_600), [Float](repeating: 0.3, count: 1_600), [Float](repeating: 0.1, count: 800)]
+    var failStream = false
+    var cached: Set<String> = []
+    var streamSampleRate: Double { 16_000 }
+    private let lock = NSLock()
+    private var streamedLog: [String] = []
+    private var synthesizedLog: [String] = []
+    var streamed: [String] { lock.withLock { streamedLog } }
+    var synthesized: [String] { lock.withLock { synthesizedLog } }
+
+    func synthesize(_ text: String) async throws -> SynthesizedAudio {
+        lock.withLock { synthesizedLog.append(text) }
+        return SynthesizedAudio(samples: [Float](repeating: 0.1, count: 8_000), sampleRate: 16_000, source: id)
+    }
+
+    func stream(_ text: String) -> AsyncThrowingStream<[Float], Error>? {
+        guard !cached.contains(text) else { return nil }
+        lock.withLock { streamedLog.append(text) }
+        let chunks = self.chunks, fail = failStream
+        return AsyncThrowingStream { cont in
+            if fail { cont.finish(throwing: ElevenLabsTTS.Failure.timeout); return }
+            for c in chunks { cont.yield(c) }
+            cont.finish()
+        }
+    }
+}
+
+/// Records streamed playbacks (prefix, chunks in order, gain) next to the plain ones.
+final class FakeStreamingPlayback: PCMPlayback, StreamingPCMPlayback, @unchecked Sendable {
+    struct Streamed { let prefix: [Float]; let chunks: [[Float]]; let gain: Float }
+    private let lock = NSLock()
+    private var plain: [SynthesizedAudio] = []
+    private var streamedLog: [Streamed] = []
+    var played: [SynthesizedAudio] { lock.withLock { plain } }
+    var streams: [Streamed] { lock.withLock { streamedLog } }
+
+    func play(_ audio: SynthesizedAudio, audience: Audience) async -> ClosedRange<TimeInterval>? {
+        lock.withLock { plain.append(audio) }
+        let start = CACurrentMediaTime()
+        return start...(start + audio.duration)
+    }
+
+    func playStream(_ chunks: AsyncThrowingStream<[Float], Error>, sampleRate: Double, prefix: [Float], gain: Float, audience: Audience) async -> ClosedRange<TimeInterval>? {
+        let start = CACurrentMediaTime()
+        var got: [[Float]] = []
+        do { for try await c in chunks { got.append(c) } } catch {}
+        let streamed = Streamed(prefix: prefix, chunks: got, gain: gain)
+        lock.withLock { streamedLog.append(streamed) }
+        let samples = prefix.count + got.reduce(0) { $0 + $1.count }
+        return samples > 0 ? start...(start + Double(samples) / sampleRate) : nil
+    }
+
+    func stop() {}
+}
+
 final class FailingTranscriber: Transcriber {
     let error: Error
     init(error: Error = TranscriberError.unavailable("test")) { self.error = error }

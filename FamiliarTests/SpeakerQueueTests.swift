@@ -96,8 +96,8 @@ final class SpeakerQueueTests: XCTestCase {
         clock.now = 101
         let second = await speaker.speak(.test("Priya, left, far.", priority: 1))
         XCTAssertEqual(waits.count, 1)
-        XCTAssertEqual(waits.first ?? 0, 3.65, accuracy: 0.001, "last ended at 100.65, +4 s spacing")
-        XCTAssertEqual(second?.lowerBound ?? 0, 104.65, accuracy: 0.001)
+        XCTAssertEqual(waits.first ?? 0, 1.15, accuracy: 0.001, "last ended at 100.65, +1.5 s spacing")
+        XCTAssertEqual(second?.lowerBound ?? 0, 102.15, accuracy: 0.001)
         _ = await speaker.speak(.test("Want to remember them?", priority: 0))
         XCTAssertEqual(waits.count, 1, "priority 0 never waits")
     }
@@ -113,6 +113,91 @@ final class SpeakerQueueTests: XCTestCase {
         XCTAssertEqual(Earcon.samples.count, 1920)
         XCTAssertEqual(Earcon.samples.first, 0)
         XCTAssertGreaterThan(Earcon.samples.max() ?? 0, 0.3)
+    }
+
+    func testRoutineCuesWaitForAPauseInSpeechButNotForever() async {
+        let clock = ManualClock(100)
+        var waits: [TimeInterval] = []
+        let (speaker, _, _) = makeSpeaker(clock: clock, sleep: { s in waits.append(s); clock.now += s })
+        var polls = 0
+        speaker.speechInProgress = { polls += 1; return polls <= 3 }       // someone talks through the first three polls
+        let urgent = await speaker.speak(.test("Wall ahead, close.", priority: 0))
+        XCTAssertEqual(urgent?.lowerBound, 100, "safety never waits for a pause")
+        XCTAssertEqual(polls, 0); XCTAssertEqual(waits, [])
+        let cue = await speaker.speak(.test("Marcus, 12 o'clock, close.", priority: 1))
+        XCTAssertNotNil(cue)
+        XCTAssertEqual(waits.filter { $0 == 0.1 }.count, 3, "held in 100 ms steps until the pause (the other wait is the spacing)")
+        speaker.speechInProgress = { true }
+        let before = waits.count
+        _ = await speaker.speak(.test("Priya, 1 o'clock, far.", priority: 1))
+        XCTAssertEqual(waits[before...].filter { $0 == 0.1 }.count, Int(speaker.maxHoldForSpeech / 0.1), "a room that never pauses: the cue goes out after 2.5 s anyway")
+    }
+
+    func testNoLeadInOffBluetooth() async {
+        let (speaker, _, playback) = makeSpeaker()
+        speaker.isBluetoothOutput = { false }
+        _ = await speaker.speak(.test("Marcus."))
+        XCTAssertEqual(playback.played[0].samples.count, 8_000, "built-in or wired output needs no lead-in")
+        speaker.isBluetoothOutput = { true }
+        _ = await speaker.speak(.test("Marcus."))
+        XCTAssertEqual(playback.played[1].samples.count, Int(speaker.leadingSilence * 16_000) + 8_000)
+    }
+
+    // MARK: Streaming
+
+    func makeStreamingSpeaker(fallback: FakeSynth? = nil) -> (VoiceSpeaker, FakeStreamingSynth, FakeStreamingPlayback) {
+        let synth = FakeStreamingSynth()
+        let playback = FakeStreamingPlayback()
+        let wrapped: SpeechSynthesizer = fallback.map { FallbackSynthesizer(primary: synth, fallback: $0) } ?? synth
+        let speaker = VoiceSpeaker(synthesizer: wrapped, playback: playback, sleep: { _ in })
+        return (speaker, synth, playback)
+    }
+
+    func testUncachedTextStreamsIntoPlaybackChunkByChunk() async {
+        let (speaker, synth, playback) = makeStreamingSpeaker()
+        let window = await speaker.speak(.test("A door at 1 o'clock, about 3 meters.", earcon: true))
+        XCTAssertNotNil(window)
+        XCTAssertEqual(synth.streamed, ["A door at 1 o'clock, about 3 meters."])
+        XCTAssertEqual(synth.synthesized, [], "nothing waited for the whole clip")
+        XCTAssertEqual(playback.streams.count, 1)
+        XCTAssertEqual(playback.streams[0].chunks, synth.chunks, "every chunk reached the player in order")
+        XCTAssertEqual(playback.streams[0].prefix.count, Int(speaker.leadingSilence * 16_000) + Earcon.prefix(for: 16_000).count, "lead-in and chime play before the first chunk")
+        XCTAssertEqual(playback.streams[0].gain, 1)
+        XCTAssertEqual(playback.played.count, 0)
+        XCTAssertEqual(speaker.spoken.last?.source, "elevenlabs-stream")
+        XCTAssertFalse(speaker.isSpeaking)
+    }
+
+    func testWhisperedCueKeepsItsGainWhenStreamed() async {
+        let (speaker, _, playback) = makeStreamingSpeaker()
+        _ = await speaker.speak(Utterance(text: "Marcus.", priority: 1, category: "speaking", personID: nil, dedupeKey: "speaking:x", audience: .user, earcon: false))
+        XCTAssertEqual(playback.streams[0].gain, SpeakerVolumeHint.gain(for: Utterance(text: "", priority: 1, category: "speaking", personID: nil, dedupeKey: nil, audience: .user, earcon: false)), accuracy: 0.001)
+    }
+
+    func testAStreamThatNeverStartsFallsStraightToTheFallbackVoice() async {
+        let apple = FakeSynth(id: "apple")
+        let (speaker, synth, playback) = makeStreamingSpeaker(fallback: apple)
+        synth.failStream = true
+        var fell: [String] = []
+        (speaker.synthesizer as? FallbackSynthesizer)?.onFallback = { text, _ in fell.append(text) }
+        let window = await speaker.speak(.test("Marcus left."))
+        XCTAssertNotNil(window)
+        XCTAssertEqual(playback.streams.count, 0)
+        XCTAssertEqual(playback.played.map(\.source), ["apple"])
+        XCTAssertEqual(synth.synthesized, [], "no second try at the primary: straight to the fallback voice")
+        XCTAssertEqual(apple.texts, ["Marcus left."])
+        XCTAssertEqual(fell, ["Marcus left."])
+    }
+
+    func testCachedTextAndStreamingOffUseThePlainPath() async {
+        let (speaker, synth, playback) = makeStreamingSpeaker()
+        synth.cached = ["Muted."]
+        _ = await speaker.speak(.test("Muted."))
+        XCTAssertEqual(playback.streams.count, 0); XCTAssertEqual(playback.played.count, 1)
+        speaker.streaming = false
+        _ = await speaker.speak(.test("Unmuted."))
+        XCTAssertEqual(playback.streams.count, 0); XCTAssertEqual(playback.played.count, 2)
+        XCTAssertEqual(synth.synthesized, ["Muted.", "Unmuted."])
     }
 
     func testSynthesisFailureDropsUtterance() async {

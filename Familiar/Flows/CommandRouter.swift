@@ -17,6 +17,8 @@ final class CommandRouter: ObservableObject {
     var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
     /// Set when Poyo runs on the vision model: "what's around me" is answered from the live view instead.
     var askAssistant: ((String) async -> Void)?
+    /// Everything spoken lately, whichever lane said it: "say that again" repeats Poyo's last line from here.
+    var dialogue: DialogueMemory?
     private let clock: () -> TimeInterval
     private var tasks: [Task<Void, Never>] = []
     private var lastGoodbyeFlowAt: TimeInterval = -.infinity
@@ -28,11 +30,17 @@ final class CommandRouter: ObservableObject {
     var goodbyeCooldown: TimeInterval = 60
     var conversationCooldown: TimeInterval = 180
     private var lastConversationOfferAt: TimeInterval = -.infinity
-    /// How long an unknown person must have been near and facing the wearer before a conversation counts as one
-    /// with them (in a packed room there is always talk and always a face somewhere).
+    /// How long someone new must have been near and facing the wearer before a conversation counts as one with them
+    /// (in a packed room there is always talk and always a face somewhere).
     var faceToFaceSeconds: TimeInterval = 20
-    private var nearSince: [Int: (first: TimeInterval, last: TimeInterval)] = [:]
+    /// Faces drop out when a person looks down or away and come back under a new track id (the device logs never
+    /// held one id for 20 s), so presence is one stretch across ids that tolerates gaps this long.
+    var nearGap: TimeInterval = 5
+    private var strangerNear: (first: TimeInterval, last: TimeInterval)?
     private var offeredTracks: Set<Int> = []
+    /// One face vector per person already offered, so a new track id of the same person is not asked again.
+    private var offeredFaces: [[Float]] = []
+    var sameFaceCosine: Float = 0.4
 
     init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCall.phrase(tracks:), clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
         self.perception = perception; self.speaker = speaker; self.cueGate = cueGate; self.consentFlow = consentFlow
@@ -78,10 +86,12 @@ final class CommandRouter: ObservableObject {
         switch e {
         case let .snapshot(tracks, _):
             for t in tracks { if case let .known(pid, name, _) = t.identity { lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: t.bearing, at: now) } }
-            for t in tracks where !t.identity.isKnown && t.distance != .far && t.isFacingUser {
-                nearSince[t.trackID] = (nearSince[t.trackID]?.first ?? now, now)
+            if tracks.contains(where: { !$0.identity.isKnown && $0.distance != .far && $0.isFacingUser }) {
+                let first = strangerNear.flatMap { now - $0.last <= nearGap ? $0.first : nil } ?? now
+                strangerNear = (first, now)
+            } else if let n = strangerNear, now - n.last > nearGap {
+                strangerNear = nil                                          // a glance away is fine; walking off is not
             }
-            nearSince = nearSince.filter { now - $0.value.last < 3 }      // a glance away is fine; walking off is not
         case let .knownLeft(pid, name, last): lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: last, at: now)
         default: break
         }
@@ -122,7 +132,9 @@ final class CommandRouter: ObservableObject {
             let tracks = perception.currentTracks()
             await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 0, category: "surroundings")
         case .repeatLast:
-            if let u = lastUtterance { await speaker.speak(u) } else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
+            if let text = dialogue?.lastPoyoLine(now: clock()) { await say(text, priority: 0, category: "repeat") }
+            else if let u = lastUtterance { await speaker.speak(u) }
+            else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
         }
     }
 
@@ -158,11 +170,24 @@ final class CommandRouter: ObservableObject {
     func conversationDetected(at t: TimeInterval) async {
         guard !consentActive, t - lastConversationOfferAt >= conversationCooldown, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
         let now = clock()
-        let partner = perception.currentTracks().first { tr in
-            !tr.identity.isKnown && !offeredTracks.contains(tr.trackID) && (nearSince[tr.trackID].map { now - $0.first >= faceToFaceSeconds } ?? false)
+        guard let near = strangerNear, now - near.last <= nearGap, near.last - near.first >= faceToFaceSeconds else {
+            let held = strangerNear.map { Int($0.last - $0.first) } ?? 0
+            DiagnosticLog.write("conversation: someone new near for \(held) s of \(Int(faceToFaceSeconds)), not offering")
+            return
         }
-        guard let partner else { DiagnosticLog.write("conversation: nobody new face to face for \(Int(faceToFaceSeconds)) s, not offering"); return }
+        // Who the consent flow will scan: facing the wearer first, then the largest face.
+        let partner = perception.currentTracks()
+            .filter { !$0.identity.isKnown && $0.distance != .far }
+            .max { ($0.isFacingUser ? 1 : 0, $0.faceHeightPx) < ($1.isFacingUser ? 1 : 0, $1.faceHeightPx) }
+        guard let partner else { DiagnosticLog.write("conversation: the new person is out of view, not offering"); return }
+        let face = perception.bestEmbeddings(track: partner.trackID, max: 1).first?.vector
+        if offeredTracks.contains(partner.trackID) || face.map({ f in offeredFaces.contains { Matcher.cosine($0, f) >= sameFaceCosine } }) == true {
+            DiagnosticLog.write("conversation: already offered this person, not offering")
+            return
+        }
         offeredTracks.insert(partner.trackID)                           // once per person, whatever they answer
+        if let face { offeredFaces.append(face) }
+        DiagnosticLog.write("conversation: offering to add the person at \(partner.bearing.clock) o'clock")
         lastConversationOfferAt = t
         lastGoodbyeFlowAt = t
         Task { await consentFlow.begin(confirmFirst: true) }

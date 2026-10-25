@@ -2,10 +2,10 @@ import XCTest
 @testable import Familiar
 
 final class ActionCaptionerTests: XCTestCase {
-    private func face(_ id: Int, x: Double, name: String? = nil, distance: Distance = .medium, facing: Bool = false) -> TrackSnapshot {
+    private func face(_ id: Int, x: Double, name: String? = nil, distance: Distance = .medium, facing: Bool = false, mouth: Double? = nil) -> TrackSnapshot {
         TrackSnapshot(trackID: id, identity: name.map { .known(personID: UUID(), name: $0, score: 0.8) } ?? .unknown(bestScore: nil),
                       bearing: Spatial.bearing(centerX: x, hFOV: 53), distance: distance, faceBox: CGRect(x: x - 0.03, y: 0.15, width: 0.06, height: 0.08),
-                      faceHeightPx: 80, yawDegrees: 0, isFacingUser: facing, mouthOpenness: nil, quality: 0.9, timestamp: 0)
+                      faceHeightPx: 80, yawDegrees: 0, isFacingUser: facing, mouthOpenness: mouth, quality: 0.9, timestamp: 0)
     }
 
     /// A 0.8-tall body (about 3 m away) whose centre is at `x`.
@@ -69,6 +69,33 @@ final class ActionCaptionerTests: XCTestCase {
         var c = ActionCaptioner()
         let out = run(&c, seconds: 5, speech: true, faces: { _ in [self.face(1, x: 0.4, facing: true), self.face(2, x: 0.6, facing: true)] })
         XCTAssertEqual(out, [])
+    }
+
+    func testTwoPeopleCloseSideBySideTalking() {
+        // 1 m away and 33° apart (about 0.6 m side by side): the old 20° rule never grouped people this close.
+        var c = ActionCaptioner()
+        let talking = { (t: Double) in Int(t * 4) % 2 == 0 ? 0.0 : 0.12 }
+        let out = run(&c, seconds: 5, faces: { t in [self.face(1, x: 0.2, distance: .close, mouth: talking(t)), self.face(2, x: 0.8, distance: .close, mouth: 0.02)] })
+        XCTAssertEqual(out.map(\.text), ["Two people talking together, 12 o'clock."])
+    }
+
+    func testStillMouthsAreNotTalkingEvenInANoisyRoom() {
+        var c = ActionCaptioner()
+        XCTAssertEqual(run(&c, seconds: 5, speech: true, faces: { _ in [self.face(1, x: 0.4, mouth: 0.03), self.face(2, x: 0.6, mouth: 0.03)] }), [])
+    }
+
+    func testGroupSurvivesDetectionFlicker() {
+        var c = ActionCaptioner()
+        // Every third pass one face is missing (turned away): the hold carries on and the group is said once.
+        let out = run(&c, seconds: 6, speech: true, faces: { t in
+            Int(t * 4) % 3 == 0 ? [self.face(1, x: 0.4)] : [self.face(1, x: 0.4), self.face(2, x: 0.55), self.face(3, x: 0.65)]
+        })
+        XCTAssertEqual(out.count, 1)
+    }
+
+    func testFarGroupsAreNotCaptioned() {
+        var c = ActionCaptioner()
+        XCTAssertEqual(run(&c, seconds: 5, speech: true, faces: { _ in [self.face(1, x: 0.45, distance: .far), self.face(2, x: 0.55, distance: .far)] }), [])
     }
 
     func testUtteranceGating() {

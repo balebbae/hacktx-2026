@@ -6,7 +6,7 @@ import Speech
 /// iOS 26 on-device transcriber built on `SpeechAnalyzer` + `SpeechTranscriber` (+ `SpeechDetector` for VAD).
 /// Not available in the Simulator: `start` throws `TranscriberError.unavailable` and `FallbackTranscriber` moves on.
 @available(iOS 26, *)
-final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @unchecked Sendable {
+final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, EndpointSource, @unchecked Sendable {
     var speakerGuess: ((TimeInterval) -> SpeakerGuess)?
     var onSpeechDetected: ((Bool, TimeInterval) -> Void)?
     /// Asset download progress for the UI (nil when assets are already installed).
@@ -17,6 +17,8 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
     private let window = TranscriptWindow()
     private let bus = EventBus<TranscriptSegment>()
     private let volatileBus = EventBus<VolatileText>()
+    private let endpointBus = EventBus<TimeInterval>()
+    private var speechWasDetected = false
     private var analyzer: SpeechAnalyzer?
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var tasks: [Task<Void, Never>] = []
@@ -31,6 +33,7 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
 
     func subscribe() -> AsyncStream<TranscriptSegment> { bus.subscribe() }
     func subscribeVolatile() -> AsyncStream<VolatileText> { volatileBus.subscribe() }
+    func subscribeEndpoints() -> AsyncStream<TimeInterval> { endpointBus.subscribe() }
     func recentSegments(seconds: TimeInterval) -> [TranscriptSegment] { window.recent(seconds: seconds, now: CACurrentMediaTime()) }
 
     func start(audio: AudioInput) async throws {
@@ -87,7 +90,11 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
             do {
                 for try await result in detector.results {
                     guard let self else { return }
-                    self.onSpeechDetected?(result.speechDetected, (self.baseHostTime ?? 0) + result.range.end.seconds)
+                    let t = (self.baseHostTime ?? 0) + result.range.end.seconds
+                    self.onSpeechDetected?(result.speechDetected, t)
+                    // Speech → silence: the wearer finished the sentence; the wake word need not wait for the final.
+                    if self.speechWasDetected, !result.speechDetected { self.endpointBus.publish(t) }
+                    self.speechWasDetected = result.speechDetected
                 }
             } catch {}
         })

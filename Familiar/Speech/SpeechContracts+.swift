@@ -9,11 +9,17 @@ struct VolatileText: Equatable { let text: String; let t: TimeInterval }
 
 protocol VolatileTextSource: AnyObject { func subscribeVolatile() -> AsyncStream<VolatileText> }
 
+/// Host-clock moments at which speech stopped (the recognizer's voice-activity verdict). The wake word flushes a
+/// request on it instead of waiting for the text to settle; the final result arrives a second or more later.
+protocol EndpointSource: AnyObject { func subscribeEndpoints() -> AsyncStream<TimeInterval> }
+
 /// Signals derived from the transcript that are not commands.
 enum SpeechSignal: Equatable { case goodbyeDetected(t: TimeInterval) }
 
 /// What the wake word collected after "Poyo", parsed or not (nil command → router says "Sorry, I didn't get that.").
-struct WakeWordHit: Equatable { let text: String; let command: Command?; let t: TimeInterval }
+/// `isCorrection`: the full request for one that already went out from in-progress text; it supersedes that one
+/// and plays no second chime.
+struct WakeWordHit: Equatable { let text: String; let command: Command?; let t: TimeInterval; var isCorrection = false }
 
 enum TranscriberError: Error, Equatable { case unavailable(String), notAuthorized }
 
@@ -43,12 +49,13 @@ final class TranscriptWindow: @unchecked Sendable {
 
 /// Tries each candidate's `start` in order and forwards the first one that succeeds. Lets the app boot on iOS 18,
 /// in the Simulator and on a device without speech assets with the same wiring.
-final class FallbackTranscriber: Transcriber, VolatileTextSource, @unchecked Sendable {
+final class FallbackTranscriber: Transcriber, VolatileTextSource, EndpointSource, @unchecked Sendable {
     let candidates: [Transcriber]
     private(set) var active: Transcriber?
     private(set) var startErrors: [String] = []
     private let bus = EventBus<TranscriptSegment>()
     private let volatileBus = EventBus<VolatileText>()
+    private let endpointBus = EventBus<TimeInterval>()
     private var forwarders: [Task<Void, Never>] = []
 
     init(candidates: [Transcriber]) { self.candidates = candidates }
@@ -57,6 +64,7 @@ final class FallbackTranscriber: Transcriber, VolatileTextSource, @unchecked Sen
 
     func subscribe() -> AsyncStream<TranscriptSegment> { bus.subscribe() }
     func subscribeVolatile() -> AsyncStream<VolatileText> { volatileBus.subscribe() }
+    func subscribeEndpoints() -> AsyncStream<TimeInterval> { endpointBus.subscribe() }
 
     func start(audio: AudioInput) async throws {
         guard active == nil else { return }
@@ -64,11 +72,13 @@ final class FallbackTranscriber: Transcriber, VolatileTextSource, @unchecked Sen
         for candidate in candidates {
             let segs = candidate.subscribe()
             let vol = (candidate as? VolatileTextSource)?.subscribeVolatile()
+            let ends = (candidate as? EndpointSource)?.subscribeEndpoints()
             do {
                 try await candidate.start(audio: audio)
                 active = candidate
                 forwarders.append(Task { [bus] in for await s in segs { bus.publish(s) } })
                 if let vol { forwarders.append(Task { [volatileBus] in for await v in vol { volatileBus.publish(v) } }) }
+                if let ends { forwarders.append(Task { [endpointBus] in for await t in ends { endpointBus.publish(t) } }) }
                 return
             } catch {
                 lastError = error
