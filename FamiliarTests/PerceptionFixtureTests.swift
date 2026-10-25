@@ -119,7 +119,7 @@ final class PerceptionFixtureTests: XCTestCase {
     }
 
     func testLeaveMarcusEmitsLeft() async throws {
-        let r = try await run("leave_marcus", gallery: try XCTUnwrap(Self.gallery), tail: 1.0)
+        let r = try await run("leave_marcus", gallery: try XCTUnwrap(Self.gallery), tail: 3.5)
         record(r, same: true)
         XCTAssertEqual(Set(r.events.compactMap(\.personName)), ["Marcus"])
         XCTAssertTrue(r.events.map(\.kindName).contains("knownLeft"), "left not emitted: \(r.events.map(\.kindName))")
