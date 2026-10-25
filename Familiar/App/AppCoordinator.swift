@@ -20,7 +20,7 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     /// Latest vision reading (judge view).
     @Published private(set) var sceneReading: SceneReading?
-    /// Deep link waiting for the UI (`familiar://introduce` from an NFC tag opens the self-enroll flow). HomeView clears it.
+    /// Deep link waiting for the UI (`familiar://introduce` opens the self-enroll flow). HomeView clears it.
     @Published var pendingRoute: AppRoute?
 
     private var tasks: [Task<Void, Never>] = []

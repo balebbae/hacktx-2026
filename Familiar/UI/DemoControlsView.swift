@@ -48,8 +48,8 @@ struct DemoControlsView: View {
             Section("Introduce yourself") {
                 Toggle("Use the enroll_marcus clip instead of the front camera", isOn: $selfEnrollUseFixture)
                     .accessibilityHint("On in the Simulator, which has no camera")
-                Button { coordinator.handle(url: URL(string: "familiar://introduce")!) } label: { Label("Simulate the NFC tag (familiar://introduce)", systemImage: "wave.3.right.circle") }
-                    .accessibilityHint("Opens the introduce screen the way a tag would")
+                Button { coordinator.handle(url: URL(string: "familiar://introduce")!) } label: { Label("Open familiar://introduce (deep link)", systemImage: "link") }
+                    .accessibilityHint("Opens the introduce screen the way a link would")
             }
             Section("Voice") {
                 Button { prewarm() } label: { Label("Re-prewarm phrases", systemImage: "flame") }

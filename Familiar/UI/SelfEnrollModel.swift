@@ -3,7 +3,7 @@ import CoreGraphics
 import QuartzCore
 import SwiftUI
 
-/// Deep-link routes the app understands (`familiar://introduce` from an NFC tag or a URL).
+/// Deep-link routes the app understands (`familiar://introduce` from a link, QR code or the demo controls).
 enum AppRoute: Equatable {
     case introduce
 

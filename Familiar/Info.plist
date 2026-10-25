@@ -74,8 +74,6 @@
 	<string>Familiar can stream video from your glasses over Wi-Fi.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Familiar notes where you met someone.</string>
-	<key>NFCReaderUsageDescription</key>
-	<string>Familiar reads an NFC tag so a person can introduce themselves on this phone.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Familiar listens for your commands and for a person saying yes to being remembered.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
