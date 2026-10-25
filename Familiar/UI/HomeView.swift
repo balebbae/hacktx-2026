@@ -9,6 +9,7 @@ struct HomeView: View {
     @State private var showReadiness = false
     @State private var detailPerson: Person?
     @State private var showDetail = false
+    @State private var previewConsentCard = ProcessInfo.processInfo.arguments.contains("-demoConsentCard")
 
     var body: some View {
         NavigationStack {
@@ -76,6 +77,9 @@ struct HomeView: View {
         })
         .fullScreenCover(isPresented: Binding(get: { runtime.showsConsentCard }, set: { if !$0 { runtime.cancelConsent() } })) {
             ConsentCardView(state: runtime.consentState, question: consentQuestion, onAnswer: { runtime.tapAnswer(yes: $0) }, onCancel: { runtime.cancelConsent() })
+        }
+        .fullScreenCover(isPresented: $previewConsentCard) {
+            ConsentCardView(state: .listening, question: Phrasebook.consentQuestion(userName: state.userName, name: "Marcus"), onAnswer: { _ in previewConsentCard = false }, onCancel: { previewConsentCard = false })
         }
         .sheet(isPresented: $showReadiness) { ReadinessView(onDone: { showReadiness = false; readinessDone = true }) }
         .onReceive(coordinator.$services) { s in if let s { runtime.bind(services: s, state: state, coordinator: coordinator) } }

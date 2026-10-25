@@ -31,9 +31,10 @@ final class LocationMeetingContext: NSObject, MeetingContextProvider, CLLocation
 
     var authorizationStatus: CLAuthorizationStatus { manager.authorizationStatus }
 
-    func start() {
+    /// One fix per launch. The readiness checklist owns the permission prompt; pass `askPermission` to prompt here instead.
+    func start(askPermission: Bool = false) {
         switch manager.authorizationStatus {
-        case .notDetermined: manager.requestWhenInUseAuthorization()
+        case .notDetermined: if askPermission { manager.requestWhenInUseAuthorization() }
         case .authorizedWhenInUse, .authorizedAlways: manager.requestLocation()
         default: break
         }
