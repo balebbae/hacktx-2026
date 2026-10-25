@@ -28,6 +28,9 @@ final class AppCoordinator: ObservableObject {
     private var frameTimes: [TimeInterval] = []
     private var narration = NarrationPolicy()
     private var lastCaptionAt: TimeInterval = -.infinity
+    /// A routine caption waiting for a pause in the dialogue; in a busy room the pause comes a few seconds later.
+    private var pendingCaption: (u: Utterance, at: TimeInterval)?
+    private let captionPatience: TimeInterval = 10
 
     /// True when the app is only the XCTest host: the live pipeline stays off so background tasks never interfere with tests.
     static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
@@ -66,6 +69,7 @@ final class AppCoordinator: ObservableObject {
         s.scene.start(frames: s.frameSource)
         narration = NarrationPolicy()
         lastCaptionAt = -.infinity
+        pendingCaption = nil
         sceneReading = nil
         s.cloudScene.trackedFaces = { [weak perception = s.perception] in perception?.currentTracks().map(\.faceBox) ?? [] }
         s.scene.faces = { [weak perception = s.perception] in perception?.currentTracks() ?? [] }
@@ -88,6 +92,12 @@ final class AppCoordinator: ObservableObject {
         })
         tasks.append(Task { [weak self] in
             for await frame in s.frameSource.subscribe() { await self?.noteFrame(at: frame.timestamp) }
+        })
+        tasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                self?.flushPendingCaption(services: s)
+            }
         })
         tasks.append(Task { [weak self] in
             for await event in s.perception.subscribe() { await self?.handle(event: event, services: s, state: state) }
@@ -225,14 +235,27 @@ final class AppCoordinator: ObservableObject {
             u = Utterance(text: Phrasebook.place(place), priority: 3, category: "place", personID: nil, dedupeKey: "place", audience: .user, earcon: false)
         case let .action(c):
             let now = CACurrentMediaTime()
-            // A dialogue gap: nothing heard in the last 1.5 s, like audio description between a film's lines.
             guard let a = ActionCaption.utterance(for: c, mode: state.mode, moving: s.motion.isMoving(), inConversation: conversationActive(s),
-                                                  inDialogueGap: s.transcriber.recentSegments(seconds: 1.5).isEmpty, sinceLast: now - lastCaptionAt) else { return }
+                                                  inDialogueGap: true, sinceLast: now - lastCaptionAt) else { return }
             lastCaptionAt = now
+            // Routine captions fit between lines of dialogue, like a film's audio description: held for the next pause.
+            if a.priority >= 2, !inDialogueGap(s) { pendingCaption = (a, now); return }
             u = a
         }
         guard s.cueGate.admit(u) else { return }
         Task { await s.speaker.speak(u) }
+    }
+
+    /// Nothing heard in the last second.
+    private func inDialogueGap(_ s: Services) -> Bool { s.transcriber.recentSegments(seconds: 1).isEmpty }
+
+    private func flushPendingCaption(services s: Services) {
+        guard let p = pendingCaption else { return }
+        if CACurrentMediaTime() - p.at > captionPatience { pendingCaption = nil; log("caption expired: \(p.u.text)"); return }
+        guard inDialogueGap(s), !s.speaker.isSpeaking else { return }
+        pendingCaption = nil
+        guard s.cueGate.admit(p.u) else { return }
+        Task { await s.speaker.speak(p.u) }
     }
 
     /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed.

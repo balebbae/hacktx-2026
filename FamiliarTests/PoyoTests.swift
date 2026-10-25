@@ -20,20 +20,41 @@ final class NarrationPolicyTests: XCTestCase {
         XCTAssertEqual(first.map(\.text), ["Wall ahead, 3 meters."])
         XCTAssertEqual(first.first?.priority, 0)
         XCTAssertNotEqual(p.utterances(for: wall(3.2, at: 5), mode: .normal, now: 5, inConversation: false).first?.category, "hazard", "not closer")
-        XCTAssertNotEqual(p.utterances(for: wall(2.2, at: 2), mode: .normal, now: 2, inConversation: false).first?.category, "hazard", "closer but within 3 s")
-        XCTAssertEqual(p.utterances(for: wall(3.0, at: 4), mode: .normal, now: 6, inConversation: true).map(\.text), ["Wall ahead, 2 meters."], "3 m aged by 2 s of walking; even mid-conversation while walking")
-        XCTAssertEqual(p.utterances(for: wall(1.0, at: 20), mode: .quiet, now: 20, inConversation: false).map(\.text), ["Wall ahead, close."], "once more when it gets close")
+        XCTAssertNotEqual(p.utterances(for: wall(2.2, at: 2), mode: .normal, now: 2, inConversation: false).first?.category, "hazard", "closer but within 5 s")
+        XCTAssertNotEqual(p.utterances(for: wall(3.0, at: 4), mode: .normal, now: 6, inConversation: true).first?.category, "hazard", "face to face: only close obstacles")
+        XCTAssertEqual(p.utterances(for: wall(3.0, at: 4), mode: .normal, now: 6, inConversation: false).map(\.text), ["Wall ahead, 2 meters."], "3 m aged by 2 s of walking (at most 1 m)")
+        XCTAssertEqual(p.utterances(for: wall(1.0, at: 20), mode: .quiet, now: 20, inConversation: true).map(\.text), ["Wall ahead, close."], "once more when it gets close, quiet or not")
         _ = p.utterances(for: reading(), mode: .quiet, now: 21, inConversation: false)
         _ = p.utterances(for: reading(), mode: .quiet, now: 24.5, inConversation: false)
-        XCTAssertEqual(p.utterances(for: wall(1.8, at: 25, "chair"), mode: .quiet, now: 25, inConversation: false).map(\.text), ["Chair ahead, 2 meters."], "re-armed after 3 s clear")
+        XCTAssertNotEqual(p.utterances(for: wall(1.0, at: 25, "chair"), mode: .normal, now: 25, inConversation: false).first?.category, "hazard", "3.5 s clear is not enough to re-arm")
+        _ = p.utterances(for: reading(), mode: .quiet, now: 26, inConversation: false)
+        _ = p.utterances(for: reading(), mode: .quiet, now: 31.5, inConversation: false)
+        XCTAssertEqual(p.utterances(for: wall(1.8, at: 32, "chair"), mode: .normal, now: 32, inConversation: false).map(\.text), ["Chair ahead, 2 meters."], "re-armed after 5 s clear")
+    }
+
+    func testTheSameObstacleUnderANewNameIsNotRepeated() {
+        // Device log, 06:16:30–06:17:00: one couch read as couch, sofa, chair, couch while sitting still → 9 alerts.
+        var p = NarrationPolicy()
+        var said: [String] = []
+        for (i, (what, m)) in [("couch", 1.0), ("sofa", 1.0), ("couch", 0.8), ("chair", 2.5), ("couch", 0.8), ("wall", 2.0), ("wall", 1.0), ("sofa", 1.0)].enumerated() {
+            var r = reading(.blocked, what: what, meters: m); r.at = Double(i) * 2
+            said += p.utterances(for: r, mode: .normal, now: r.at, inConversation: false).map(\.text)
+        }
+        XCTAssertEqual(said, ["Couch ahead, close."])
+    }
+
+    func testThePersonYouAreTalkingToIsNotAnObstacle() {
+        var p = NarrationPolicy()
+        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "person", meters: 1), mode: .normal, now: 0, inConversation: true), [])
+        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "person", meters: 1), mode: .normal, now: 1, inConversation: false).map(\.text), ["Person ahead, close."])
     }
 
     func testANewObstacleBehindTheOldOneIsAnnounced() {
         var p = NarrationPolicy()
         func r(_ what: String, _ m: Double, _ t: TimeInterval) -> SceneReading { var x = reading(.blocked, what: what, meters: m); x.at = t; return x }
-        XCTAssertEqual(p.utterances(for: r("laptop", 0.4, 0), mode: .quiet, now: 0, inConversation: false).map(\.text), ["Laptop ahead, close."])
-        XCTAssertEqual(p.utterances(for: r("wall", 3.5, 4), mode: .quiet, now: 4, inConversation: false).map(\.text), ["Wall ahead, 4 meters."], "the session log case: the wall was never announced")
-        XCTAssertEqual(p.utterances(for: r("wall", 1.2, 8), mode: .quiet, now: 8, inConversation: false).map(\.text), ["Wall ahead, close."])
+        XCTAssertEqual(p.utterances(for: r("laptop", 0.4, 0), mode: .normal, now: 0, inConversation: false).map(\.text), ["Laptop ahead, close."])
+        XCTAssertEqual(p.utterances(for: r("wall", 3.5, 4), mode: .normal, now: 4, inConversation: false).map(\.text), ["Wall ahead, 4 meters."], "the session log case: the wall was never announced")
+        XCTAssertEqual(p.utterances(for: r("wall", 1.2, 10), mode: .normal, now: 10, inConversation: false).map(\.text), ["Wall ahead, close."])
     }
 
     func testFarCautionIsNotAnAlert() {
@@ -44,24 +65,27 @@ final class NarrationPolicyTests: XCTestCase {
     func testHazardsOncePerCooldown() {
         var p = NarrationPolicy()
         let r = reading(hazards: [.init(name: "stairs down", x: 0.5, meters: 3)])
+        let bag = reading(hazards: [.init(name: "bag", x: 0.5, meters: 2)])
         XCTAssertEqual(p.utterances(for: r, mode: .quiet, now: 0, inConversation: false).map(\.text), ["Stairs down, 12 o'clock, 3 meters."])
-        XCTAssertEqual(p.utterances(for: r, mode: .quiet, now: 5, inConversation: false), [])
-        XCTAssertEqual(p.utterances(for: r, mode: .quiet, now: 11, inConversation: false).count, 1)
+        XCTAssertEqual(p.utterances(for: r, mode: .quiet, now: 30, inConversation: false), [])
+        XCTAssertEqual(p.utterances(for: bag, mode: .quiet, now: 5, inConversation: false), [], "any two hazards 10 s apart")
+        XCTAssertEqual(p.utterances(for: bag, mode: .quiet, now: 12, inConversation: false).count, 1)
+        XCTAssertEqual(p.utterances(for: r, mode: .quiet, now: 61, inConversation: false).count, 1)
     }
 
-    func testGistOnlyWhenChangedAndPacedByMode() {
+    func testGistOnlyInChattyModeWhenChanged() {
         var p = NarrationPolicy()
         XCTAssertEqual(p.utterances(for: reading(), mode: .quiet, now: 0, inConversation: false), [], "quiet mode never narrates")
-        let first = p.utterances(for: reading(), mode: .normal, now: 1, inConversation: false)
+        XCTAssertEqual(p.utterances(for: reading(), mode: .normal, now: 1, inConversation: false), [], "normal mode: only when asked")
+        XCTAssertEqual(p.utterances(for: reading(), mode: .normal, now: 2, inConversation: false, moving: false), [])
+        let first = p.utterances(for: reading(), mode: .chatty, now: 3, inConversation: false, moving: false)
         XCTAssertEqual(first.map(\.text), ["Hallway, door at 1 o'clock."])
         XCTAssertEqual(first.first?.priority, 2)
-        XCTAssertEqual(p.utterances(for: reading(summary: "Long hallway ahead."), mode: .normal, now: 30, inConversation: false), [], "same scene: no gist")
+        XCTAssertEqual(p.utterances(for: reading(summary: "Long hallway ahead."), mode: .chatty, now: 30, inConversation: false), [], "same scene: no gist")
         let kitchen = reading(place: "kitchen", objects: ["table", "fridge"], summary: "Kitchen, table at 12 o'clock.")
-        XCTAssertEqual(p.utterances(for: kitchen, mode: .normal, now: 10, inConversation: false), [], "too soon in normal mode")
-        XCTAssertEqual(p.utterances(for: kitchen, mode: .normal, now: 10, inConversation: true), [])
-        XCTAssertEqual(p.utterances(for: kitchen, mode: .normal, now: 22, inConversation: false).map(\.text), ["Kitchen, table at 12 o'clock."])
-        let office = reading(place: "office", objects: ["desk"], summary: "Office, desk at 11 o'clock.")
-        XCTAssertEqual(p.utterances(for: office, mode: .chatty, now: 31, inConversation: false).count, 1, "chatty: 8 s")
+        XCTAssertEqual(p.utterances(for: kitchen, mode: .chatty, now: 8, inConversation: false), [], "too soon")
+        XCTAssertEqual(p.utterances(for: kitchen, mode: .chatty, now: 12, inConversation: true), [])
+        XCTAssertEqual(p.utterances(for: kitchen, mode: .chatty, now: 12, inConversation: false).map(\.text), ["Kitchen, table at 12 o'clock."])
     }
 
     func testGistNeverDescribesPeople() {

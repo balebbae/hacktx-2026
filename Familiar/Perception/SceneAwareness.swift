@@ -102,7 +102,7 @@ struct HazardPolicy {
 final class SceneAwareness: @unchecked Sendable {
     var classifyInterval: TimeInterval = 1.0
     var flowInterval: TimeInterval = 0.25
-    /// Inverse time-to-contact of the centre of view (0 = nothing approaching) at every flow pass; `MotionState`.
+    /// Signed inverse time-to-contact of the centre of view (1/s; negative = receding) at every flow pass; `MotionState`.
     var onExpansion: ((Double, TimeInterval) -> Void)?
     /// Perception's face tracks, so action captions can name agreed people and tell who faces the wearer.
     var faces: () -> [TrackSnapshot] = { [] }
@@ -149,8 +149,9 @@ final class SceneAwareness: @unchecked Sendable {
         }
         if now - lastFlow >= flowInterval {
             lastFlow = now
-            let (ttc, pan) = flowPass(frame)
-            onExpansion?(ttc.map { 1 / $0 } ?? 0, now)
+            let (expansion, pan) = flowPass(frame)
+            if let expansion { onExpansion?(expansion, now) }
+            let ttc = expansion.flatMap { $0 > 0 ? 1 / $0 : nil }
             if let e = policy.withLock({ $0.flow(timeToContact: ttc, now: now) }) { bus.publish(e) }
             if let bodies = humans(frame) {
                 let faces = faces(), speech = speechActive()
@@ -191,10 +192,11 @@ final class SceneAwareness: @unchecked Sendable {
         }
     }
 
-    /// One optical-flow pass over a 160 px-wide copy. Time to contact: mean divergence in the centre square; a surface
-    /// approaching at time-to-contact τ expands with du/dx + dv/dy = 2Δt/τ, head turns add almost none. Pan: °/s,
-    /// positive = head turning right, so action captions can tell a head turn from someone crossing.
-    private func flowPass(_ frame: Frame) -> (ttc: Double?, pan: Double) {
+    /// One optical-flow pass over a 160 px-wide copy. Expansion: 1/τ from the mean divergence in the centre square; a
+    /// surface approaching at time-to-contact τ expands with du/dx + dv/dy = 2Δt/τ, head turns add almost none. Signed
+    /// (negative = receding), so noise averages out instead of always reading as "approaching". Nil when flow failed.
+    /// Pan: °/s, positive = head turning right, so action captions can tell a head turn from someone crossing.
+    private func flowPass(_ frame: Frame) -> (expansion: Double?, pan: Double) {
         guard let small = downscaled(frame.pixelBuffer, width: 160) else { return (nil, 0) }
         defer { previous = (small, frame.timestamp) }
         guard let prev = previous, frame.timestamp - prev.t > 0.05, frame.timestamp - prev.t < 1,
@@ -210,8 +212,7 @@ final class SceneAwareness: @unchecked Sendable {
         let pan = Self.medianHorizontalFlow(flow) / 160 * frame.horizontalFOVDegrees / dt
         // Flow is from `small` toward the previous frame, so expansion since then reads as negative divergence.
         let div = -Self.centreDivergence(flow)
-        guard div > 0 else { return (nil, pan) }
-        return (2 * dt / div, pan)
+        return (div / (2 * dt), pan)
     }
 
     /// Median horizontal flow over a sparse grid: the background (camera pan), not the one person walking through it.
