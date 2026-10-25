@@ -12,3 +12,5 @@ venv/
 .modal/
 *.egg-info/
 project.yml.lock
+.env
+*.png
