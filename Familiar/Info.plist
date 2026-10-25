@@ -70,6 +70,13 @@
 	<string>Familiar listens for your commands and for a person saying yes to being remembered.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Familiar transcribes speech on this phone to hear commands and consent.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>PlusJakartaSans-Regular.ttf</string>
+		<string>PlusJakartaSans-Medium.ttf</string>
+		<string>PlusJakartaSans-SemiBold.ttf</string>
+		<string>PlusJakartaSans-Bold.ttf</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
