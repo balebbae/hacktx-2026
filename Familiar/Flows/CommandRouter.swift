@@ -15,6 +15,8 @@ final class CommandRouter: ObservableObject {
     private let rollCall: ([TrackSnapshot]) -> String
     /// What's around: hazards, then the given people line, then place and objects (`SceneAwareness.describe`).
     var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
+    /// Set when Poyo runs on the vision model: "what's around me" is answered from the live view instead.
+    var askAssistant: ((String) async -> Void)?
     private let clock: () -> TimeInterval
     private var tasks: [Task<Void, Never>] = []
     private var lastGoodbyeFlowAt: TimeInterval = -.infinity
@@ -82,7 +84,7 @@ final class CommandRouter: ObservableObject {
         handled.append(c)
         switch c {
         case .whoIsHere:
-            await say(rollCall(perception.currentTracks()), priority: 1, category: "rollcall", dedupe: "rollcall", earcon: true)
+            await say(rollCall(perception.currentTracks()), priority: 0, category: "rollcall", dedupe: "rollcall")
         case .rememberThem:
             guard !consentActive else { return }
             Task { await consentFlow.begin(confirmFirst: false) }
@@ -107,8 +109,9 @@ final class CommandRouter: ObservableObject {
             consentFlow.cancel()
             speaker.stopAll()
         case .describeSurroundings:
+            if let ask = askAssistant { await ask("What's around me?"); return }
             let tracks = perception.currentTracks()
-            await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 1, category: "surroundings")
+            await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 0, category: "surroundings")
         case .repeatLast:
             if let u = lastUtterance { await speaker.speak(u) } else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
         }
@@ -122,13 +125,13 @@ final class CommandRouter: ObservableObject {
         let needle = name.lowercased()
         let tracks = perception.currentTracks()
         if let t = tracks.first(where: { ($0.identity.name ?? "").lowercased().hasPrefix(needle) }), let n = t.identity.name {
-            await say(Phrasebook.rollCallKnown(name: n, band: t.bearing.band, distance: t.distance), priority: 1, category: "whereis"); return
+            await say(Phrasebook.rollCallKnown(name: n, bearing: t.bearing, distance: t.distance), priority: 0, category: "whereis"); return
         }
         if let seen = lastSeen.values.filter({ $0.name.lowercased().hasPrefix(needle) }).max(by: { $0.at < $1.at }) {
-            await say(Phrasebook.lastSeen(name: seen.name, band: seen.bearing.band), priority: 1, category: "whereis"); return
+            await say(Phrasebook.lastSeen(name: seen.name, bearing: seen.bearing), priority: 0, category: "whereis"); return
         }
-        if let p = peopleStore.find(name: name) { await say(Phrasebook.notVisible(name: p.name), priority: 1, category: "whereis"); return }
-        await say(Phrasebook.unknownPerson(name), priority: 1, category: "whereis")
+        if let p = peopleStore.find(name: name) { await say(Phrasebook.notVisible(name: p.name), priority: 0, category: "whereis"); return }
+        await say(Phrasebook.unknownPerson(name), priority: 0, category: "whereis")
     }
 
     /// Goodbye → offer to remember, only if a stranger is close, no flow is active and the cooldown passed.

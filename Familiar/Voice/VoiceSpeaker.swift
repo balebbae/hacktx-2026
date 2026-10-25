@@ -106,6 +106,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
 
     private func perform(_ job: Job) async -> ClosedRange<TimeInterval>? {
         let u = job.utterance
+        if u.text.isEmpty {
+            // Earcon-only acknowledgement ("heard you"): no synthesis, and nil so it never delays the next cue.
+            guard u.earcon else { return nil }
+            state.withLock { $0.speaking = true }
+            _ = await playback.play(SynthesizedAudio(samples: Earcon.prefix(for: Earcon.sampleRate), sampleRate: Earcon.sampleRate, source: "earcon"), audience: u.audience)
+            return nil
+        }
         if u.priority >= 1, let lastEnd = state.withLock({ $0.lastEnd }) {
             let wait = lastEnd + minimumSpacing - clock()
             if wait > 0 { await sleep(wait) }

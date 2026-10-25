@@ -1,6 +1,6 @@
 import Foundation
 
-/// "Who's here": known people left → right ("{Name}, {band}, {distance}."), then a count of everyone else.
+/// "Who's here": known people left → right ("{Name}, {clock}, {distance}."), then a count of everyone else.
 enum RollCall {
     static func phrase(tracks: [TrackSnapshot]) -> String {
         guard !tracks.isEmpty else { return Phrasebook.nobody }
@@ -10,7 +10,7 @@ enum RollCall {
         var seen = Set<UUID>()
         let parts = known.compactMap { t -> String? in
             guard let pid = t.identity.personID, let name = t.identity.name, seen.insert(pid).inserted else { return nil }
-            return Phrasebook.rollCallKnown(name: name, band: t.bearing.band, distance: t.distance)
+            return Phrasebook.rollCallKnown(name: name, bearing: t.bearing, distance: t.distance)
         }
         let duplicates = known.count - parts.count
         return (parts + [Phrasebook.rollCallOthers(count: others + duplicates)]).joined(separator: " ")

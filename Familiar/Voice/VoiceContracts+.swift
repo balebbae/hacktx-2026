@@ -104,8 +104,10 @@ extension Phrasebook {
     static func prewarmSet(names: [String]) -> [String] {
         var out: [String] = []
         for name in names where !name.isEmpty {
-            for band in BearingBand.all { for distance in Distance.all { out.append(appeared(name: name, band: band, distance: distance)) } }
-            for band in [BearingBand.left, .right, .ahead] { out.append(approaching(name: name, from: band)) }
+            for hour in [11, 12, 1] {
+                for distance in Distance.all { out.append(appeared(name: name, bearing: .atClock(hour), distance: distance)) }
+                out.append(approaching(name: name, from: .atClock(hour)))
+            }
             out.append(arrived(name: name))
             out.append(left(name: name))
             out.append(speaking(name: name))
@@ -124,10 +126,15 @@ extension Phrasebook {
         var out: [String] = [nobody]
         for k in 0...4 { out.append(rollCallOthers(count: k)) }
         for k in 1...4 { out.append(rollCallNoKnown(count: k)) }
-        for band in [BearingBand.left, .right, .ahead] { out.append(unknownClose(band: band)) }
+        for hour in [11, 12, 1] { out.append(unknownClose(bearing: .atClock(hour))) }
         out += [shouldIAdd, scanningFace, lookTowardMe, wasThatAYes, whatShouldICallYou, nothingSaved, theyLeft]
         out += ChatterMode.allCases.map(mode)
         out += [muted, unmuted, didNotGetThat]
         return out
     }
+}
+
+extension Utterance {
+    /// Played the moment a "Poyo, …" request is heard; interrupts whatever is playing.
+    static let heardYou = Utterance(text: "", priority: 0, category: "chime", personID: nil, dedupeKey: nil, audience: .user, earcon: true)
 }

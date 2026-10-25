@@ -18,12 +18,15 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var consentState: ConsentState = .idle
     @Published private(set) var fps: Double = 0
     @Published private(set) var lastError: String?
+    /// Latest vision reading (judge view).
+    @Published private(set) var sceneReading: SceneReading?
     /// Deep link waiting for the UI (`familiar://introduce` from an NFC tag opens the self-enroll flow). HomeView clears it.
     @Published var pendingRoute: AppRoute?
 
     private var tasks: [Task<Void, Never>] = []
     private weak var state: AppState?
     private var frameTimes: [TimeInterval] = []
+    private var narration = NarrationPolicy()
 
     /// True when the app is only the XCTest host: the live pipeline stays off so background tasks never interfere with tests.
     static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
@@ -60,6 +63,13 @@ final class AppCoordinator: ObservableObject {
             tasks.append(Task { for await v in vad.subscribe() { s.cueGate.userSpeaking = v.isSpeech && v.guess == .user } })
         }
         s.scene.start(frames: s.frameSource)
+        narration = NarrationPolicy()
+        sceneReading = nil
+        s.cloudScene.trackedFaces = { [weak perception = s.perception] in perception?.currentTracks().map(\.faceBox) ?? [] }
+        s.cloudScene.start(frames: s.frameSource)
+        tasks.append(Task { [weak self] in
+            for await r in s.cloudScene.subscribe() { await self?.handle(reading: r, services: s, state: state) }
+        })
         tasks.append(Task { [weak self] in
             for await e in s.scene.subscribe() { self?.handle(scene: e, services: s, state: state) }
         })
@@ -151,6 +161,7 @@ final class AppCoordinator: ObservableObject {
         tasks.removeAll()
         services?.perception.stop()
         services?.scene.stop()
+        services?.cloudScene.stop()
         services?.frameSource.stop()
         services?.transcriber.stop()
         services?.speaker.stopAll()
@@ -184,6 +195,16 @@ final class AppCoordinator: ObservableObject {
         }
         guard s.cueGate.admit(u) else { return }
         Task { await s.speaker.speak(u) }
+    }
+
+    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed.
+    private func handle(reading r: SceneReading, services s: Services, state: AppState) {
+        sceneReading = r
+        log("vision \(r.path.rawValue)\(r.pathMeters.map { " \($0) m" } ?? ""): \(r.summary)")
+        let inConversation = s.transcriber.recentSegments(seconds: 15).contains { $0.isFinal && $0.speaker == .other }
+        for u in narration.utterances(for: r, mode: state.mode, now: CACurrentMediaTime(), inConversation: inConversation) where s.cueGate.admit(u) {
+            Task { await s.speaker.speak(u) }
+        }
     }
 
     private func noteFrame(at t: TimeInterval) {

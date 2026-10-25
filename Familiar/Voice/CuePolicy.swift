@@ -51,7 +51,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
                 defer { s.people[pid] = p }
                 if let last = p.lastAppeared, now - last < cooldowns.appeared { return [] }
                 p.lastAppeared = now
-                return [cue(Phrasebook.appeared(name: name, band: t.bearing.band, distance: t.distance), pid, "appeared", priority: 1)]
+                return [cue(Phrasebook.appeared(name: name, bearing: t.bearing, distance: t.distance), pid, "appeared", priority: 1)]
 
             case let .knownApproaching(t):
                 guard case let .known(pid, name, _) = t.identity else { return [] }
@@ -62,7 +62,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
                 if let last = p.lastApproaching, now - last < cooldowns.approaching { return [] }
                 if let arrived = p.lastArrived, now - arrived < cooldowns.approachSuppressionAfterArrival { return [] }
                 p.lastApproaching = now
-                return [cue(Phrasebook.approaching(name: name, from: t.bearing.band), pid, "approaching", priority: 1, dedupeKey: "move:\(pid.uuidString)")]
+                return [cue(Phrasebook.approaching(name: name, from: t.bearing), pid, "approaching", priority: 1, dedupeKey: "move:\(pid.uuidString)")]
 
             case let .knownArrived(t):
                 guard case let .known(pid, name, _) = t.identity else { return [] }
@@ -93,7 +93,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
                 if let last = s.unknownCloseTracks[first.trackID], now - last < cooldowns.unknownClose * 3 { return [] }
                 s.lastUnknownClose = now
                 s.unknownCloseTracks[first.trackID] = now
-                return [cue(Phrasebook.unknownClose(band: first.bearing.band), nil, "unknownClose", priority: 3, dedupeKey: "unknownClose", earcon: false)]
+                return [cue(Phrasebook.unknownClose(bearing: first.bearing), nil, "unknownClose", priority: 3, dedupeKey: "unknownClose", earcon: false)]
 
             case .unknownCountChanged, .cue:
                 return []

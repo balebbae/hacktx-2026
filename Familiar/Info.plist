@@ -39,6 +39,12 @@
 	<string>$(ELEVENLABS_VOICE_ID)</string>
 	<key>META_MODEL_API_KEY</key>
 	<string>$(META_MODEL_API_KEY)</string>
+	<key>VISION_API_URL</key>
+	<string>$(VISION_API_URL)</string>
+	<key>VISION_API_KEY</key>
+	<string>$(VISION_API_KEY)</string>
+	<key>VISION_MODEL</key>
+	<string>$(VISION_MODEL)</string>
 	<key>MODAL_EMBED_URL</key>
 	<string>$(MODAL_EMBED_URL)</string>
 	<key>MODAL_KEY</key>

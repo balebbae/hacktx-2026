@@ -52,6 +52,9 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
         let detector = SpeechDetector(detectionOptions: .init(sensitivityLevel: .medium), reportResults: true)
         let analyzer = SpeechAnalyzer(modules: [detector, transcriber])
         self.analyzer = analyzer
+        let context = AnalysisContext()
+        context.contextualStrings[.general] = WakeWord.contextualStrings
+        try? await analyzer.setContext(context)
         let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: AudioBuffers.chunkFormat) ?? AudioBuffers.chunkFormat
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         input = continuation

@@ -31,7 +31,7 @@ final class AgentToolRouterTests: XCTestCase {
         perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .left, distance: .medium), FakePerception.track(2)]
         let r = await router.handle(AgentToolCall(name: "who_is_here"))
         XCTAssertEqual(r.text, RollCall.phrase(tracks: perception.tracks))
-        XCTAssertEqual(r.text, "Marcus, left, medium. One other person.")
+        XCTAssertEqual(r.text, "Marcus, 12 o'clock, medium. One other person.")
         XCTAssertFalse(r.isError)
     }
 
@@ -48,11 +48,11 @@ final class AgentToolRouterTests: XCTestCase {
     func testWhereIsVisibleThenLastSeenThenNotVisible() async {
         perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .right, distance: .close)]
         var r = await router.handle(AgentToolCall(name: "where_is", parameters: ["name": "marcus"]))
-        XCTAssertEqual(r.text, "Marcus, right, close.")
+        XCTAssertEqual(r.text, "Marcus, 12 o'clock, close.")
         perception.tracks = []
         lastSeen[marcusID] = LastSeen(name: "Marcus", personID: marcusID, bearing: Bearing(degrees: -30, band: .left), at: 1)
         r = await router.handle(AgentToolCall(name: "where_is", parameters: ["name": "Marcus"]))
-        XCTAssertEqual(r.text, Phrasebook.lastSeen(name: "Marcus", band: .left))
+        XCTAssertEqual(r.text, Phrasebook.lastSeen(name: "Marcus", bearing: Bearing(degrees: -30, band: .left)))
         lastSeen = [:]
         r = await router.handle(AgentToolCall(name: "where_is", parameters: ["name": "Marcus"]))
         XCTAssertEqual(r.text, "I don't see Marcus.")
@@ -119,7 +119,7 @@ final class AgentToolRouterTests: XCTestCase {
 
     func testSceneContextCountsStrangersOnly() {
         let tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .ahead, distance: .close), FakePerception.track(2), FakePerception.track(3)]
-        XCTAssertEqual(AgentToolRouter.sceneContext(tracks: tracks), "Visible now: Marcus ahead close; 2 other people.")
+        XCTAssertEqual(AgentToolRouter.sceneContext(tracks: tracks), "Visible now: Marcus 12 o'clock close; 2 other people.")
         XCTAssertEqual(AgentToolRouter.sceneContext(tracks: []), "Visible now: no one.")
         XCTAssertEqual(AgentToolRouter.sceneContext(tracks: [FakePerception.track(2)]), "Visible now: 1 other person.")
     }

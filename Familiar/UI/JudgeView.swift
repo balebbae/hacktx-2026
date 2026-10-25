@@ -8,7 +8,7 @@ struct JudgeView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var runtime: FlowRuntime
 
-    static let banner = "Known people only. Strangers are \"a person\". Faces never leave this phone."
+    static let banner = "Known people only. Strangers are \"a person\". Faces are blacked out before any image leaves this phone."
 
     var body: some View {
         VStack(spacing: 0) {
@@ -89,6 +89,7 @@ struct JudgeView: View {
                     .font(.footnote.monospaced())
                     .accessibilityLabel("Status: \(state.mode.title) mode, \(state.muted ? "muted" : "unmuted"), \(runtime.people.count) people remembered")
             }
+            if let b = runtime.brain { PoyoPanel(brain: b, reading: coordinator.sceneReading, scene: coordinator.services?.cloudScene) }
             if let a = runtime.agent { AgentPanel(session: a) }   // S8
             Section("Last utterances") {
                 ForEach(coordinator.utterances.suffix(3).reversed()) { e in
@@ -116,6 +117,38 @@ struct JudgeView: View {
     }
 
     private var consentLabel: String { ConsentStateLabel.text(runtime.consentState) }
+}
+
+// MARK: - Poyo (vision brain + always-on scene)
+
+struct PoyoPanel: View {
+    @ObservedObject var brain: PoyoBrain
+    let reading: SceneReading?
+    let scene: CloudScene?
+
+    var body: some View {
+        Section("Poyo") {
+            HStack(alignment: .top, spacing: 10) {
+                if let upload = scene?.lastUpload {
+                    Image(decorative: upload, scale: 1).resizable().aspectRatio(contentMode: .fit).frame(width: 72)
+                        .accessibilityLabel("Last image sent to the vision model, faces blacked out")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reading.map { "\($0.path.rawValue) · \($0.summary)" } ?? "no scene reading yet").font(.footnote)
+                    let st = scene?.status
+                    Text("uploads \(st?.uploads ?? 0) · scene \(st?.lastLatency.map { String(format: "%.1f s", $0) } ?? "–") · answer \(brain.lastLatency.map { String(format: "%.1f s", $0) } ?? "–")\(brain.busy ? " · thinking" : "")")
+                        .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                    if let e = st?.lastError { Text(e).font(.caption2).foregroundStyle(.red) }
+                }
+            }
+            Button("Ask: what's in front of me?") { Task { await brain.ask("what's in front of me?") } }
+                .font(.footnote)
+                .accessibilityHint("Sends a scripted question to Poyo")
+            ForEach(brain.lines.suffix(6)) { line in
+                Text("\(line.role.rawValue): \(line.text)").font(.footnote)
+            }
+        }
+    }
 }
 
 // MARK: - S8 agent status (own views so `@ObservedObject` refreshes them without Combine plumbing)

@@ -143,13 +143,7 @@ final class ManualCommandSource: CommandSource, @unchecked Sendable {
 
 extension Phrasebook {
     /// Not in Core's vocabulary; needed by `whereIs` once the person has left the frame.
-    static func lastSeen(name: String, band: BearingBand) -> String {
-        switch band {
-        case .left, .farLeft: return "I last saw \(name) on your left."
-        case .right, .farRight: return "I last saw \(name) on your right."
-        case .ahead: return "I last saw \(name) ahead of you."
-        }
-    }
+    static func lastSeen(name: String, bearing: Bearing) -> String { "I last saw \(name) at \(clock(bearing))." }
     static let noOneToRemember = nobody
 }
 

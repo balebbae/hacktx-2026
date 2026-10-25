@@ -51,6 +51,8 @@ final class Services: ObservableObject {
     var vad: LoudnessSplit?
     /// On-device scene and hazard awareness over the same frames.
     let scene = SceneAwareness()
+    /// The always-on eye: redacted frames → vision model → what matters for walking.
+    let cloudScene = CloudScene(client: VisionLLMClient())
 
     /// Convenience accessors for the skeleton UI (nil when the real module is wired instead).
     var logSpeaker: LogSpeaker? { speaker as? LogSpeaker }
@@ -154,8 +156,8 @@ struct PassThroughCuePolicy: CuePolicy {
             Utterance(text: text, priority: priority, category: category, personID: pid, dedupeKey: "\(category):\(pid?.uuidString ?? "")", audience: .user, earcon: true)
         }
         switch e {
-        case let .knownAppeared(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.appeared(name: name, band: t.bearing.band, distance: t.distance), pid, "appeared")] }
-        case let .knownApproaching(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.approaching(name: name, from: t.bearing.band), pid, "approaching")] }
+        case let .knownAppeared(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.appeared(name: name, bearing: t.bearing, distance: t.distance), pid, "appeared")] }
+        case let .knownApproaching(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.approaching(name: name, from: t.bearing), pid, "approaching")] }
         case let .knownArrived(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.arrived(name: name), pid, "arrived")] }
         case let .knownLeft(pid, name, _): return [u(Phrasebook.left(name: name), pid, "left", priority: 2)]
         case let .speakingStarted(t): if mode != .quiet, case let .known(pid, name, _) = t.identity { return [u(Phrasebook.speaking(name: name), pid, "speaking")] }

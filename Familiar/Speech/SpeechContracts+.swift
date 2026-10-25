@@ -12,7 +12,7 @@ protocol VolatileTextSource: AnyObject { func subscribeVolatile() -> AsyncStream
 /// Signals derived from the transcript that are not commands.
 enum SpeechSignal: Equatable { case goodbyeDetected(t: TimeInterval) }
 
-/// What the wake word collected after "Familiar", parsed or not (nil command → router says "Sorry, I didn't get that.").
+/// What the wake word collected after "Poyo", parsed or not (nil command → router says "Sorry, I didn't get that.").
 struct WakeWordHit: Equatable { let text: String; let command: Command?; let t: TimeInterval }
 
 enum TranscriberError: Error, Equatable { case unavailable(String), notAuthorized }

@@ -23,19 +23,19 @@ final class RollCallTests: XCTestCase {
             TestTracks.known("Priya", id: priya, track: 3, band: .farLeft, distance: .close),
             TestTracks.unknown(track: 4, band: .farRight),
         ]
-        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Priya, far left, close. Marcus, right, medium. 2 other people.")
+        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Priya, 11 o'clock, close. Marcus, 12 o'clock, medium. 2 other people.")
     }
 
     func testOneKnownOneOther() {
         let tracks = [TestTracks.known("Marcus", id: UUID(), track: 1), TestTracks.unknown(track: 2)]
-        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Marcus, ahead, close. One other person.")
-        XCTAssertEqual(RollCall.phrase(tracks: [tracks[0]]), "Marcus, ahead, close. No one else.")
+        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Marcus, 12 o'clock, close. One other person.")
+        XCTAssertEqual(RollCall.phrase(tracks: [tracks[0]]), "Marcus, 12 o'clock, close. No one else.")
     }
 
     func testDuplicateKnownIdentityCountedOnce() {
         let marcus = UUID()
         let tracks = [TestTracks.known("Marcus", id: marcus, track: 1, band: .left), TestTracks.known("Marcus", id: marcus, track: 2, band: .right)]
-        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Marcus, left, close. One other person.")
+        XCTAssertEqual(RollCall.phrase(tracks: tracks), "Marcus, 12 o'clock, close. One other person.")
     }
 
     func testNeverSaysFamiliar() {
