@@ -5,12 +5,16 @@ import os
 /// Watches recognizer text for "Poyo" (plus common mishearings), then hands the request that follows to
 /// `CommandParser` / the assistant as soon as it is complete:
 /// - a final segment with text after the wake word emits at once, parsed or not;
-/// - in-progress (volatile) text emits once it has not changed for `settle` seconds, and the final that later
+/// - in-progress (volatile) text emits once it has not changed for `settle` seconds, or `endpointSettle` seconds
+///   after the recognizer's voice-activity detector said speech stopped (`endpoint(at:)`); the final that later
 ///   arrives for the same utterance is swallowed;
 /// - a bare "Poyo." waits up to `collectWindow` seconds for the next final.
 final class WakeWord: @unchecked Sendable {
-    var collectWindow: TimeInterval = 4
-    var settle: TimeInterval = 1.0
+    var collectWindow: TimeInterval = 3
+    var settle: TimeInterval = 0.5
+    /// After speech stopped, how long the volatile text must hold still (the recognizer finishes the words it
+    /// already heard a beat later).
+    var endpointSettle: TimeInterval = 0.25
     var onHit: ((WakeWordHit) -> Void)?
 
     static let target = "poyo"
@@ -20,7 +24,7 @@ final class WakeWord: @unchecked Sendable {
     static let contextualStrings = ["Poyo", "Hey Poyo"]
     static let maxDistance = 1
 
-    private struct Pending { var hitAt: TimeInterval; var finals: [String]; var volatile: String; var changedAt: TimeInterval }
+    private struct Pending { var hitAt: TimeInterval; var finals: [String]; var volatile: String; var changedAt: TimeInterval; var endpointAt: TimeInterval? = nil }
     private struct State { var pending: Pending?; var swallowFinalUntil: TimeInterval? }
     private let state = OSAllocatedUnfairLock(initialState: State())
 
@@ -97,6 +101,16 @@ final class WakeWord: @unchecked Sendable {
         if let emit { onHit?(emit) }
     }
 
+    /// Speech stopped at `t` (the recognizer's detector): a pending request is flushed as soon as its text holds
+    /// still for `endpointSettle`, instead of the full `settle`.
+    func endpoint(at t: TimeInterval) {
+        state.withLock { s in
+            guard var p = s.pending, !p.volatile.isEmpty else { return }
+            p.endpointAt = t
+            s.pending = p
+        }
+    }
+
     /// Emits settled volatile text and flushes an expired collection (call about every 0.1 s).
     func tick(now: TimeInterval) {
         let emit: WakeWordHit? = state.withLock { s in
@@ -105,7 +119,8 @@ final class WakeWord: @unchecked Sendable {
                 s.pending = nil
                 return WakeWord.hit(p, at: now)
             }
-            guard !p.volatile.isEmpty, now - p.changedAt >= settle else { return nil }
+            let needed = p.endpointAt.map { $0 >= p.changedAt - 0.5 } == true ? endpointSettle : settle
+            guard !p.volatile.isEmpty, now - p.changedAt >= needed else { return nil }
             s.pending = nil
             s.swallowFinalUntil = now + 6
             return WakeWord.hit(p, at: now)
