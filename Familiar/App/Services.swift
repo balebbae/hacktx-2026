@@ -87,6 +87,14 @@ final class Services: ObservableObject {
         }
 
         let vad = AudioFactory.makeVoiceActivity(audio: engine.rawInput)
+        // MARK: S7 — who is talking to me. VAD `.other` speech + mouth-openness variance of known, facing tracks
+        // → `speakingStarted` once per track-session. Lives on the real pipeline only (ScriptedPerception scripts it).
+        if let pipeline = perception as? PerceptionPipeline {
+            let activeSpeaker = ActiveSpeaker()
+            activeSpeaker.attach(vad)
+            pipeline.activeSpeaker = activeSpeaker
+        }
+        // MARK: end S7
         let transcriber: Transcriber
         #if targetEnvironment(simulator)
         transcriber = FakeTranscriber(transcriptNamed: "conversation") ?? FakeTranscriber(text: "")
