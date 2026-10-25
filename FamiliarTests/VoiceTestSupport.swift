@@ -63,7 +63,7 @@ final class FailingTranscriber: Transcriber {
     func recentSegments(seconds: TimeInterval) -> [TranscriptSegment] { [] }
 }
 
-final class StubURLProtocol: URLProtocol {
+final class TTSStubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Int, Data))?
     nonisolated(unsafe) static var delay: TimeInterval = 0
     nonisolated(unsafe) static var requests: [(request: URLRequest, body: Data)] = []
@@ -73,7 +73,7 @@ final class StubURLProtocol: URLProtocol {
 
     static func makeSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [StubURLProtocol.self]
+        config.protocolClasses = [TTSStubURLProtocol.self]
         return URLSession(configuration: config)
     }
 
@@ -81,12 +81,12 @@ final class StubURLProtocol: URLProtocol {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        let body = StubURLProtocol.readBody(request)
-        StubURLProtocol.lock.lock()
-        StubURLProtocol.requests.append((request, body))
-        let handler = StubURLProtocol.handler
-        let delay = StubURLProtocol.delay
-        StubURLProtocol.lock.unlock()
+        let body = TTSStubURLProtocol.readBody(request)
+        TTSStubURLProtocol.lock.lock()
+        TTSStubURLProtocol.requests.append((request, body))
+        let handler = TTSStubURLProtocol.handler
+        let delay = TTSStubURLProtocol.delay
+        TTSStubURLProtocol.lock.unlock()
         let work = { [self] in
             do {
                 let (status, data) = try handler?(request) ?? (200, Data())

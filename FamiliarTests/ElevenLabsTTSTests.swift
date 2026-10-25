@@ -6,20 +6,20 @@ final class ElevenLabsTTSTests: XCTestCase {
     var cache: PhraseCache!
 
     override func setUp() {
-        StubURLProtocol.reset()
+        TTSStubURLProtocol.reset()
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("eleven-tests-\(UUID().uuidString)")
         cache = PhraseCache(directory: dir)
     }
 
-    override func tearDown() { StubURLProtocol.reset(); try? FileManager.default.removeItem(at: dir) }
+    override func tearDown() { TTSStubURLProtocol.reset(); try? FileManager.default.removeItem(at: dir) }
 
     func makeTTS() -> ElevenLabsTTS {
-        ElevenLabsTTS(apiKey: "test-key", voiceID: "VOICE", cache: cache, session: StubURLProtocol.makeSession())
+        ElevenLabsTTS(apiKey: "test-key", voiceID: "VOICE", cache: cache, session: TTSStubURLProtocol.makeSession())
     }
 
     func testRequestShapeDecodeAndCache() async throws {
         let pcm = PCM16.encode([Float](repeating: 0.25, count: 1_600))
-        StubURLProtocol.handler = { _ in (200, pcm) }
+        TTSStubURLProtocol.handler = { _ in (200, pcm) }
         let tts = makeTTS()
         let audio = try await tts.synthesize("Marcus, ahead, close.")
         XCTAssertEqual(audio.samples.count, 1_600)
@@ -27,7 +27,7 @@ final class ElevenLabsTTSTests: XCTestCase {
         XCTAssertEqual(audio.source, "elevenlabs")
         XCTAssertEqual(audio.samples[10], 0.25, accuracy: 0.001)
 
-        let sent = try XCTUnwrap(StubURLProtocol.requests.first)
+        let sent = try XCTUnwrap(TTSStubURLProtocol.requests.first)
         XCTAssertEqual(sent.request.url?.absoluteString, "https://api.elevenlabs.io/v1/text-to-speech/VOICE?output_format=pcm_16000")
         XCTAssertEqual(sent.request.httpMethod, "POST")
         XCTAssertEqual(sent.request.value(forHTTPHeaderField: "xi-api-key"), "test-key")
@@ -41,11 +41,11 @@ final class ElevenLabsTTSTests: XCTestCase {
         XCTAssertEqual(cache.files().count, 1)
         let again = try await tts.synthesize("Marcus, ahead, close.")
         XCTAssertEqual(again.samples.count, 1_600)
-        XCTAssertEqual(StubURLProtocol.requests.count, 1, "second call served from disk")
+        XCTAssertEqual(TTSStubURLProtocol.requests.count, 1, "second call served from disk")
     }
 
     func testHTTPErrorSurfaces() async {
-        StubURLProtocol.handler = { _ in (401, Data("nope".utf8)) }
+        TTSStubURLProtocol.handler = { _ in (401, Data("nope".utf8)) }
         do {
             _ = try await makeTTS().synthesize("x")
             XCTFail("expected failure")
@@ -56,8 +56,8 @@ final class ElevenLabsTTSTests: XCTestCase {
     }
 
     func testFirstByteTimeoutFallsBackToApple() async throws {
-        StubURLProtocol.handler = { _ in (200, PCM16.encode([0.1, 0.2])) }
-        StubURLProtocol.delay = 1.0
+        TTSStubURLProtocol.handler = { _ in (200, PCM16.encode([0.1, 0.2])) }
+        TTSStubURLProtocol.delay = 1.0
         let tts = makeTTS()
         tts.firstByteTimeout = 0.1
         let apple = FakeSynth(id: "apple")
@@ -72,12 +72,12 @@ final class ElevenLabsTTSTests: XCTestCase {
     }
 
     func testWarmSkipsCachedPhrases() async throws {
-        StubURLProtocol.handler = { _ in (200, PCM16.encode([Float](repeating: 0.1, count: 160))) }
+        TTSStubURLProtocol.handler = { _ in (200, PCM16.encode([Float](repeating: 0.1, count: 160))) }
         let tts = makeTTS()
         try await tts.warm("Muted.")
         try await tts.warm("Muted.")
         try await tts.warm("Unmuted.")
-        XCTAssertEqual(StubURLProtocol.requests.count, 2)
+        XCTAssertEqual(TTSStubURLProtocol.requests.count, 2)
         XCTAssertEqual(cache.files().count, 2)
     }
 
