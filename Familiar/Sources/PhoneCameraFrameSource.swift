@@ -3,10 +3,18 @@ import AVFoundation
 import CoreVideo
 import QuartzCore
 
-/// Back camera, 1080p30, portrait. Compiles in the Simulator; emits no frames there.
+/// Back camera (or the front one for self-enroll), 1080p30, portrait. Compiles in the Simulator; emits no frames there.
 /// Exposes the running `AVCaptureSession` so `AVCaptureEventInteraction` (volume buttons) can be attached later.
 final class PhoneCameraFrameSource: NSObject, FrameSource, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
     let session = AVCaptureSession()
+    let position: AVCaptureDevice.Position
+    var isFront: Bool { position == .front }
+
+    init(position: AVCaptureDevice.Position = .back) {
+        self.position = position
+        super.init()
+    }
+
     private let output = AVCaptureVideoDataOutput()
     private let queue = DispatchQueue(label: "familiar.camera", qos: .userInitiated)
     private let bus = EventBus<Frame>(defaultPolicy: .bufferingNewest(1))
@@ -40,8 +48,8 @@ final class PhoneCameraFrameSource: NSObject, FrameSource, AVCaptureVideoDataOut
         session.beginConfiguration()
         defer { session.commitConfiguration() }
         session.sessionPreset = .hd1920x1080
-        guard let cam = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
-            throw NSError(domain: "PhoneCameraFrameSource", code: 2, userInfo: [NSLocalizedDescriptionKey: "No back camera"])
+        guard let cam = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) else {
+            throw NSError(domain: "PhoneCameraFrameSource", code: 2, userInfo: [NSLocalizedDescriptionKey: isFront ? "No front camera" : "No back camera"])
         }
         device = cam
         let input = try AVCaptureDeviceInput(device: cam)

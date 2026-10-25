@@ -18,6 +18,8 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var consentState: ConsentState = .idle
     @Published private(set) var fps: Double = 0
     @Published private(set) var lastError: String?
+    /// Deep link waiting for the UI (`familiar://introduce` from an NFC tag opens the self-enroll flow). HomeView clears it.
+    @Published var pendingRoute: AppRoute?
 
     private var tasks: [Task<Void, Never>] = []
     private weak var state: AppState?
@@ -144,6 +146,7 @@ final class AppCoordinator: ObservableObject {
 
     func handle(url: URL) {
         log("open url \(url.absoluteString)")
+        if let route = AppRoute(url: url) { pendingRoute = route }
     }
 }
 

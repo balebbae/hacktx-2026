@@ -10,6 +10,8 @@ struct HomeView: View {
     @State private var detailPerson: Person?
     @State private var showDetail = false
     @State private var previewConsentCard = ProcessInfo.processInfo.arguments.contains("-demoConsentCard")
+    @State private var selfEnroll: SelfEnrollModel?
+    @StateObject private var nfc = NFCTagReader()
 
     var body: some View {
         NavigationStack {
@@ -36,6 +38,25 @@ struct HomeView: View {
                         .disabled(runtime.showsConsentCard)
                         .accessibilityHint("Asks the person in front of you for permission to remember their face")
                     consentStatus
+                }
+                Section {
+                    Button { introduce() } label: {
+                        Label("Introduce yourself", systemImage: "person.crop.circle.badge.plus")
+                            .font(.title2.weight(.bold))
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(coordinator.services == nil || runtime.showsConsentCard)
+                    .accessibilityLabel("Introduce yourself")
+                    .accessibilityHint("Hand the phone to the person in front of you. They scan their face, type their name and tap yes themselves")
+                    if NFCTagReader.isAvailable {
+                        Button { nfc.scan { url in coordinator.handle(url: url) } } label: { Label("Scan tag", systemImage: "wave.3.right.circle") }
+                            .disabled(nfc.isScanning)
+                            .accessibilityHint("Hold the phone near an NFC tag that opens the introduce screen")
+                    }
+                    if let st = nfc.status { Text(st).font(.footnote).foregroundStyle(.secondary).accessibilityLabel("Tag: \(st)") }
+                } footer: {
+                    Text("Anyone can introduce themselves on this phone, or tap an NFC tag that opens familiar://introduce.")
                 }
                 Section("Source") {
                     Picker("Source", selection: $state.source) {
@@ -82,12 +103,29 @@ struct HomeView: View {
             ConsentCardView(state: .listening, question: Phrasebook.consentQuestion(userName: state.userName, name: "Marcus"), onAnswer: { _ in previewConsentCard = false }, onCancel: { previewConsentCard = false })
         }
         .sheet(isPresented: $showReadiness) { ReadinessView(onDone: { showReadiness = false; readinessDone = true }) }
+        .fullScreenCover(item: $selfEnroll) { model in
+            SelfEnrollView(model: model, onClose: { selfEnroll = nil })
+                .interactiveDismissDisabled()
+        }
+        .onChange(of: coordinator.pendingRoute) { _, route in
+            guard let route else { return }
+            coordinator.pendingRoute = nil
+            if route == .introduce { introduce() }
+        }
+        .onChange(of: selfEnroll?.step) { _, step in
+            if case let .done(p)? = step { runtime.refreshPeople(); _ = p }
+        }
         .onReceive(coordinator.$services) { s in if let s { runtime.bind(services: s, state: state, coordinator: coordinator) } }
         .onChange(of: runtime.lastSaved) { _, p in if let p { detailPerson = p; showDetail = true } }
         .onAppear { if !readinessDone { showReadiness = true } }
     }
 
     private func whoIsHere() { if runtime.router != nil { runtime.whoIsHere() } else { coordinator.whoIsHere() } }
+    private func introduce() {
+        guard selfEnroll == nil, let s = coordinator.services else { return }
+        if runtime.showsConsentCard { runtime.cancelConsent() }
+        selfEnroll = SelfEnrollFactory.make(services: s, runtime: runtime, state: state)
+    }
     private func rememberThem() { if runtime.router != nil { runtime.rememberThem() } else { coordinator.rememberThem() } }
 
     private var consentQuestion: String {

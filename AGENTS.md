@@ -5,7 +5,7 @@ Familiar is an iOS app (SwiftUI) for blind and low-vision people wearing Ray-Ban
 
 ## Non-negotiable product rules (they also appear on the judge-view banner)
 1. Only people who agreed are ever recognized. A stranger is "a person" or "someone": never a name, never a description, never stored.
-2. Agreement happens on the other person's side (their spoken yes or their tap). The wearer cannot add someone unilaterally.
+2. Agreement happens on the other person's side (their spoken yes or their tap). The wearer cannot add someone unilaterally. The other person may also enroll themselves by picking up the phone ("Introduce yourself" button or an NFC tag / `familiar://introduce`) and tapping YES on their own.
 3. Faces, embeddings and consent clips live only on this phone. Cloud services receive **text only** (TTS strings; transcript snippets for name extraction). One exception: the optional Modal embedding fallback receives aligned 112×112 face crops and discards them.
 4. Anyone can be removed. Removal deletes everything: the record, thumbnail, consent clip and the iOS contact the app created.
 5. The glasses' recording LED stays on; never hide that the camera is on.
@@ -15,7 +15,7 @@ Familiar is an iOS app (SwiftUI) for blind and low-vision people wearing Ray-Ban
 9. Silence is the default. Cues are 3–6 words. No app utterance may contain the word "Familiar" (it is the wake word).
 
 ## Never build
-NFC-tag enrollment, a web enrollment page, notifications to known people, voice/speaker identification, space awareness (doors, tables), any server-side storage, SwiftData, Combine-based plumbing, any cloud image call outside the Modal toggle, an ElevenLabs agent session that runs unattended.
+NFC-tag enrollment that bypasses the other person's own tap-to-consent, a web enrollment page, notifications to known people, voice/speaker identification, space awareness (doors, tables), any server-side storage, SwiftData, Combine-based plumbing, any cloud image call outside the Modal toggle, an ElevenLabs agent session that runs unattended.
 
 ## Repo layout (Xcode synchronized folder groups: adding a file never edits project.pbxproj)
 ```
