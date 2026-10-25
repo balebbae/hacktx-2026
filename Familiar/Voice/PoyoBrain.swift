@@ -30,6 +30,8 @@ final class PoyoBrain: ObservableObject {
     /// Whether `.other` really means someone else. False until the wearer calibrates their voice: on the phone mic the
     /// uncalibrated loudness split labels everyone, the wearer included, as `.other`.
     var speakerTrusted: () -> Bool = { true }
+    /// Renames the remembered person in view (or the one just saved); returns what to say. Set by `FlowRuntime`.
+    var rename: (String) async -> String = { _ in Phrasebook.nobodyToUpdate }
     var followUpWindow: TimeInterval = 8
     var clock: () -> TimeInterval = { CACurrentMediaTime() }
 
@@ -71,6 +73,12 @@ final class PoyoBrain: ObservableObject {
     func ask(_ phrase: String, addressed: Bool = true) async {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !consentActive() else { return }
+        // "Change their contact to Anish": on the phone, before the command grammar ("call them Anish" is not a call).
+        if addressed, let name = Self.renameTarget(in: text) {
+            lines.append(AgentLine(role: .user, text: text))
+            await renameAndSay(name)
+            return
+        }
         // Built-in commands stay on the phone, except "what's around me", which is what the live view is for.
         if addressed, let c = CommandParser.parse(text), c != .describeSurroundings {
             lines.append(AgentLine(role: .user, text: text))
@@ -131,6 +139,10 @@ final class PoyoBrain: ObservableObject {
         }
         guard !Task.isCancelled, !consentActive() else { return }
 
+        if addressed, json["action"] as? String == "rename", let name = (json["name"] as? String)?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            await renameAndSay(name)
+            return
+        }
         if addressed, let command = Self.command(action: json["action"] as? String, name: json["name"] as? String, mode: json["mode"] as? String) {
             lines.append(AgentLine(role: .tool, text: "\(command)"))
             await router.handle(command)          // speaks its own confirmation; remember starts the consent flow
@@ -145,6 +157,31 @@ final class PoyoBrain: ObservableObject {
         let window = await say(line, priority: addressed ? 0 : 1)
         if let start = window?.lowerBound { lastLatency = start - t0 }
         followUpUntil = clock() + followUpWindow
+    }
+
+    private func renameAndSay(_ name: String) async {
+        let reply = await rename(name)
+        lines.append(AgentLine(role: .tool, text: "rename → \(reply)"))
+        await say(reply)
+        followUpUntil = clock() + followUpWindow
+    }
+
+    private static let renamePatterns: [NSRegularExpression] = [
+        "^(?:please |can you |could you )?(?:update|change|rename|set|fix|correct|edit|make)\\b.*\\b(?:contact|name)\\b.*?\\b(?:to|as)(?: be)? ([a-z][a-z'-]*(?: [a-z][a-z'-]*)?)(?: please| instead.*| not .*)?$",
+        "^(?:their|his|her|this person's|that person's|the person's) name is (?:actually )?([a-z][a-z'-]*(?: [a-z][a-z'-]*)?)(?: please| instead.*| not .*)?$",
+        "^(?:save|call) (?:them|him|her) (?:as )?([a-z][a-z'-]*)(?: instead.*| not .*)$",
+    ].map { try! NSRegularExpression(pattern: $0) }
+
+    /// "update their contact to be Anish instead of someone I know" → "Anish".
+    static func renameTarget(in text: String) -> String? {
+        let s = CommandParser.normalize(text)
+        for re in renamePatterns {
+            guard let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)), let r = Range(m.range(at: 1), in: s) else { continue }
+            let name = String(s[r]).replacingOccurrences(of: "\\b(please|now)\\b", with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !["them", "him", "her", "it", "someone", "quiet", "normal", "chatty"].contains(name) else { continue }
+            return name.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        }
+        return nil
     }
 
     @discardableResult
@@ -171,7 +208,7 @@ final class PoyoBrain: ObservableObject {
     static let schema: [String: Any] = [
         "type": "object", "additionalProperties": false,
         "properties": ["say": ["type": "string"],
-                       "action": ["type": "string", "enum": ["none", "remember", "call", "text", "mute", "unmute", "mode", "cancel"]],
+                       "action": ["type": "string", "enum": ["none", "remember", "rename", "call", "text", "mute", "unmute", "mode", "cancel"]],
                        "name": ["type": ["string", "null"]], "mode": ["type": ["string", "null"]]],
         "required": ["say", "action", "name", "mode"],
     ]
@@ -189,8 +226,8 @@ final class PoyoBrain: ObservableObject {
     [to you] messages are addressed to you: always answer. [overheard] messages are the wearer talking to someone \
     else: set say to SKIP unless they clearly asked something you can answer from what you see.
     Set action only when the wearer clearly asks for it: remember (save the person in front of them; the app asks \
-    that person for permission, so never say they are saved), call or text (with name), mute, unmute, mode (quiet, \
-    normal or chatty), cancel. Otherwise action is none and say holds the answer.
+    that person for permission, so never say they are saved), rename (change the saved name of the person they are \
+    looking at; name holds the new name), call or text (with name), mute, unmute, mode (quiet, normal or chatty), cancel. Otherwise action is none and say holds the answer.
     Never say your own name. If you cannot tell, say so briefly.
     """
 }

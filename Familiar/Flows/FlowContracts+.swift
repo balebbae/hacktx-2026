@@ -16,9 +16,12 @@ struct ConsentFlowConfig {
     var nameTimeout: TimeInterval = 6
     /// How long to wait for the other person's number, and how long the digits must stay unchanged before it counts
     /// (a full 10 digits, or a shorter number after a longer pause).
-    var numberTimeout: TimeInterval = 20
+    var numberTimeout: TimeInterval = 60
     var numberSettle: TimeInterval = 1
     var numberPause: TimeInterval = 3
+    /// Before coaching, wait until nobody has spoken for `pauseNeeded` seconds (give up waiting after `pauseMaxWait`).
+    var pauseNeeded: TimeInterval = 2.5
+    var pauseMaxWait: TimeInterval = 30
     var minEmbeddings = 3
     var minQuality: Float = 0.3
     var clipLead: TimeInterval = 0.5
@@ -129,6 +132,8 @@ struct ConversationWindow {
     /// Off on the phone: the loudness split cannot reliably tell the wearer from someone a metre away, and the
     /// router already requires an unknown person nearby.
     var requireBothSides = true
+    /// From the first to the last segment in the window, so a few loud sentences are not "a conversation".
+    var minDuration: TimeInterval = 0
     private var items: [(t: TimeInterval, words: Int, speaker: SpeakerGuess)] = []
 
     /// Adds a final segment; true (and starts over) once the window holds a conversation.
@@ -136,6 +141,7 @@ struct ConversationWindow {
         items.append((seg.end, seg.text.split(separator: " ").count, seg.speaker))
         items.removeAll { $0.t < seg.end - seconds }
         guard items.reduce(0, { $0 + $1.words }) >= words,
+              (items.last?.t ?? 0) - (items.first?.t ?? 0) >= minDuration,
               !requireBothSides || (items.contains(where: { $0.speaker == .user }) && items.contains(where: { $0.speaker == .other })) else { return false }
         items.removeAll()
         return true
@@ -159,6 +165,10 @@ extension Phrasebook {
     static let coachLookAtCamera = "Ask them to look at the camera."
     static let coachAskName = "Ask their name."
     static func coachAskNumber(name: String?) -> String { name.map { "Now ask \($0) for their number." } ?? "Now ask for their number." }
+    static func coachHandPhone(name: String?) -> String { "Hand \(name ?? "them") your phone so they can type their number." }
+    static func renamed(_ name: String) -> String { "Updated. That's \(name) now." }
+    static let nobodyToUpdate = "I don't see anyone in your contacts to update."
+    static let notInContactsYet = "They're not in your contacts yet."
     /// "Got 5 1 2, 5 5 5, 0 1 0 0." — digit by digit so the wearer can check it.
     static func gotNumber(_ digits: String) -> String {
         let d = Array(digits)

@@ -130,6 +130,9 @@ final class SpokenConsentFlow: ConsentFlow {
     /// their number, and the number is saved with the contact.
     private func runSuggested() async {
         guard pickTarget() != nil else { finish(.idle); return }
+        // Never talk over the conversation: wait for a pause first.
+        await waitForPause()
+        guard !Task.isCancelled, pickTarget() != nil else { finish(.idle); return }
         acceptedSpeakers = [.other, .none]
         ignoreQuestions = true
         holdUnclear = true
@@ -168,27 +171,41 @@ final class SpokenConsentFlow: ConsentFlow {
         await speaker.speak(Utterance(text: text, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: false))
     }
 
-    /// The wearer is told to ask for the number; digits heard from anyone in the next `numberTimeout` seconds
-    /// (spoken as numerals or words, in one go or in pieces) are read back and returned, formatted.
+    /// Until no final speech for `pauseNeeded` seconds (at most `pauseMaxWait`).
+    private func waitForPause() async {
+        let deadline = clock() + config.pauseMaxWait
+        while clock() < deadline, !Task.isCancelled {
+            let now = clock()
+            if !transcriber.recentSegments(seconds: config.pauseNeeded + 1).contains(where: { $0.isFinal && $0.end > now - config.pauseNeeded }) { return }
+            try? await Task.sleep(nanoseconds: UInt64(config.pollInterval * 1_000_000_000))
+        }
+    }
+
+    /// The wearer is told to hand over the phone; the other person types their number on the card (or skips), or
+    /// says it: digits heard from anyone (numerals or words, in pieces) count too. Read back and returned, formatted.
     private func askForNumber(name: String?) async -> String? {
         acceptedSpeakers = [.other, .none, .user]
         collectingOnly = true
-        defer { collectingOnly = false; acceptedSpeakers = [.other, .none] }
+        typedNumber = nil
+        defer { collectingOnly = false; acceptedSpeakers = [.other, .none]; numberRequestBus.publish(nil); typedNumber = nil }
         notBefore = clock()
-        await coach(Phrasebook.coachAskNumber(name: name))
+        await coach(Phrasebook.coachHandPhone(name: name))
+        numberRequestBus.publish(NumberRequest(name: name))
         notBefore = clock()
         pendingReplies.removeAll()
         let deadline = clock() + config.numberTimeout
         var count = 0
         var changedAt = clock()
+        var digits = ""
         while clock() < deadline, !Task.isCancelled {
             try? await Task.sleep(nanoseconds: UInt64(config.pollInterval * 1_000_000_000))
+            if let typed = typedNumber { digits = PhoneNumber.digits(in: typed ?? ""); break }
             let n = PhoneNumber.digits(in: pendingReplies.joined(separator: " ")).count
             if n != count { count = n; changedAt = clock() }
             if n >= 10, clock() - changedAt >= config.numberSettle { break }
             if n >= 7, clock() - changedAt >= config.numberPause { break }
         }
-        let digits = PhoneNumber.digits(in: pendingReplies.joined(separator: " "))
+        if typedNumber == nil { digits = PhoneNumber.digits(in: pendingReplies.joined(separator: " ")) }
         guard (7...15).contains(digits.count), !Task.isCancelled else {
             if !Task.isCancelled { await coach(Phrasebook.noNumber) }
             return nil
@@ -380,6 +397,19 @@ final class SpokenConsentFlow: ConsentFlow {
 
     private var ignoreQuestions = false
     private var collectingOnly = false
+
+    // MARK: Number entry on the phone
+
+    struct NumberRequest: Equatable { let name: String? }
+    private let numberRequestBus = EventBus<NumberRequest?>()
+    /// `.some(nil)` = skipped on the card.
+    private var typedNumber: String??
+
+    /// Non-nil while the card should show the number pad (the other person holds the phone).
+    func numberRequests() -> AsyncStream<NumberRequest?> { numberRequestBus.subscribe() }
+
+    /// From the card: the typed number, or nil for "Skip".
+    func enterNumber(_ text: String?) { typedNumber = .some(text) }
     private var holdUnclear = false
     private var heardUnclear = false
 

@@ -248,6 +248,25 @@ final class PoyoBrainTests: XCTestCase {
         XCTAssertEqual(vision.prompts.count, 2, "the wearer's follow-up, mislabelled as someone else, still counts")
     }
 
+    func testRenameRequestsAreUnderstoodOnThePhone() async {
+        XCTAssertEqual(PoyoBrain.renameTarget(in: "can you update their contact to be Anish instead of someone I know"), "Anish")
+        XCTAssertEqual(PoyoBrain.renameTarget(in: "Change his name to Anish Patel."), "Anish Patel")
+        XCTAssertEqual(PoyoBrain.renameTarget(in: "their name is actually Anish"), "Anish")
+        XCTAssertEqual(PoyoBrain.renameTarget(in: "save them as Anish instead"), "Anish")
+        XCTAssertNil(PoyoBrain.renameTarget(in: "call Marcus"))
+        XCTAssertNil(PoyoBrain.renameTarget(in: "change to quiet mode"))
+        XCTAssertNil(PoyoBrain.renameTarget(in: "what's on the table"))
+        var renamed: [String] = []
+        brain.rename = { renamed.append($0); return Phrasebook.renamed($0) }
+        await brain.ask("update their contact to be Anish instead of someone I know")
+        XCTAssertEqual(renamed, ["Anish"])
+        XCTAssertEqual(vision.prompts.count, 0, "no model call")
+        XCTAssertEqual(speaker.texts, ["Updated. That's Anish now."])
+        vision.reply = ["say": "", "action": "rename", "name": "Priya", "mode": NSNull()]
+        await brain.ask("she goes by Priya")
+        XCTAssertEqual(renamed, ["Anish", "Priya"], "the model can ask for a rename too")
+    }
+
     func testNothingDuringConsent() async {
         brain.consentActive = { true }
         await brain.ask("what's on the table")

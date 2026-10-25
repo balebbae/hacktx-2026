@@ -24,7 +24,7 @@ final class ConsentFlowTests: XCTestCase {
         let now = CACurrentMediaTime()
         recorder.append(AudioChunk(samples: Array(repeating: 0.1, count: 16_000 * 20), sampleRate: 16_000, timestamp: now - 10))
         var cfg = config ?? ConsentFlowConfig()
-        if config == nil { cfg.listenTimeout = 1.5; cfg.reaskTimeout = 1; cfg.nameTimeout = 0.5; cfg.gatherTimeout = 0.5; cfg.extraGatherTimeout = 0.5; cfg.confirmTimeout = 1; cfg.numberTimeout = 1; cfg.numberSettle = 0.2; cfg.numberPause = 0.3 }
+        if config == nil { cfg.listenTimeout = 1.5; cfg.reaskTimeout = 1; cfg.nameTimeout = 0.5; cfg.gatherTimeout = 0.5; cfg.extraGatherTimeout = 0.5; cfg.confirmTimeout = 1; cfg.numberTimeout = 1; cfg.numberSettle = 0.2; cfg.numberPause = 0.3; cfg.pauseNeeded = 0.1; cfg.pauseMaxWait = 0.5 }
         let flow = SpokenConsentFlow(perception: perception, transcriber: transcriber, speaker: speaker, cueGate: gate, peopleStore: store, contacts: contacts, nameExtractor: FixedName(guess: name), yesNo: RulesYesNoClassifier(), clipRecorder: recorder, meeting: StaticMeetingContext(placeName: "HackTX"), paths: paths, userName: { "Priya" }, nameGuess: nil, config: cfg)
         states = []
         let stream = flow.subscribe()
@@ -157,7 +157,7 @@ final class ConsentFlowTests: XCTestCase {
         transcriber.emit(.init(speaker: .other, text: "Yes, sure."))
         await waitFor { [self] in speaker.texts.contains(Phrasebook.coachAskName) }
         transcriber.emit(.init(speaker: .other, text: "Dana"))
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.coachAskNumber(name: "Dana")) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.coachHandPhone(name: "Dana")) }
         transcriber.emit(.init(speaker: .other, text: "Sure, it's five one two, 555"))
         transcriber.emit(.init(speaker: .other, text: "oh one oh oh"))
         await run.value
@@ -167,7 +167,7 @@ final class ConsentFlowTests: XCTestCase {
         XCTAssertEqual(contacts.created.first?.phone, "(512) 555-0100")
         XCTAssertEqual(p.consent.kind, .spoken); XCTAssertEqual(p.consent.replyTranscript, "Yes, sure.")
         XCTAssertTrue(p.consent.askedText.hasPrefix("Asked by Priya:"), p.consent.askedText)
-        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachAskName, Phrasebook.coachAskNumber(name: "Dana"),
+        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachAskName, Phrasebook.coachHandPhone(name: "Dana"),
                                        "Got 5 1 2, 5 5 5, 0 1 0 0.", Phrasebook.saved(name: "Dana")])
         XCTAssertTrue(speaker.entries.allSatisfy { $0.utterance.audience == .user }, "nothing is said to the other person by the app")
         XCTAssertFalse(gate.consentActive)
@@ -182,7 +182,25 @@ final class ConsentFlowTests: XCTestCase {
         guard case let .done(p)? = states.last else { return XCTFail("expected done") }
         XCTAssertEqual(p.name, "Marcus"); XCTAssertEqual(p.consent.kind, .tap); XCTAssertNil(p.phone)
         XCTAssertFalse(speaker.texts.contains(Phrasebook.coachAskName))
-        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachAskNumber(name: "Marcus"), Phrasebook.noNumber, Phrasebook.saved(name: "Marcus")])
+        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachHandPhone(name: "Marcus"), Phrasebook.noNumber, Phrasebook.saved(name: "Marcus")])
+    }
+
+    func testSuggestedNumberTypedOnThePhone() async {
+        let flow = makeFlow()
+        let requests = flow.numberRequests()
+        var shown: [SpokenConsentFlow.NumberRequest?] = []
+        let watcher = Task { for await r in requests { shown.append(r) } }
+        let run = Task { await flow.begin(confirmFirst: true) }
+        await waitFor { [self] in isListening }
+        flow.tapAnswer(yes: true)
+        await waitFor { shown.contains(SpokenConsentFlow.NumberRequest(name: "Marcus")) }
+        flow.enterNumber("512 555 0100")
+        await run.value
+        watcher.cancel()
+        guard case let .done(p)? = states.last else { return XCTFail("expected done") }
+        XCTAssertEqual(p.phone, "(512) 555-0100")
+        XCTAssertEqual(shown.last, .some(nil), "the number pad closes")
+        XCTAssertTrue(speaker.texts.contains("Got 5 1 2, 5 5 5, 0 1 0 0."))
     }
 
     func testSuggestedOtherSaysNoSavesNothing() async {
@@ -193,7 +211,7 @@ final class ConsentFlowTests: XCTestCase {
         await run.value
         XCTAssertEqual(states.last, .declined)
         XCTAssertTrue(store.all().isEmpty); XCTAssertTrue(contacts.created.isEmpty)
-        XCTAssertFalse(speaker.texts.contains { $0.hasPrefix("Now ask") })
+        XCTAssertFalse(speaker.texts.contains { $0.hasPrefix("Hand ") })
         XCTAssertEqual(speaker.texts.last, Phrasebook.nothingSaved)
     }
 

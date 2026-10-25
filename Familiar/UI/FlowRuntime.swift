@@ -40,6 +40,8 @@ final class FlowRuntime: ObservableObject {
     private(set) var services: Services?
     @Published private(set) var agent: AgentSession?          // S8
     @Published private(set) var brain: PoyoBrain?
+    /// Non-nil while the consent card shows the number pad (the other person holds the phone).
+    @Published private(set) var numberEntry: SpokenConsentFlow.NumberRequest?
     private var goodbyeDetector: GoodbyeDetector?
     let manualCommands = ManualCommandSource()
     private var tasks: [Task<Void, Never>] = []
@@ -89,6 +91,10 @@ final class FlowRuntime: ObservableObject {
         }
         consentFlow = flow
         peopleStore = store
+        if let spoken = flow as? SpokenConsentFlow {
+            let requests = spoken.numberRequests()
+            tasks.append(Task { [weak self] in for await r in requests { self?.numberEntry = r } })
+        }
         let surroundings: (String?) -> String = { [weak scene = s.scene] people in scene?.describe(people: people) ?? (people ?? Phrasebook.nothingToName) }
         let r = FlowFactory.makeCommandRouter(perception: s.perception, speaker: s.speaker, cueGate: s.cueGate, consentFlow: flow, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m })
         r.surroundings = surroundings
@@ -103,7 +109,8 @@ final class FlowRuntime: ObservableObject {
         let speech = s.transcriber.subscribe()
         tasks.append(Task { [weak r] in
             var window = ConversationWindow()
-            window.seconds = 40; window.words = 25; window.requireBothSides = false
+            // A longer conversation (60+ words over at least 30 s), not the first few sentences.
+            window.seconds = 120; window.words = 60; window.minDuration = 30; window.requireBothSides = false
             for await seg in speech where seg.isFinal {
                 guard window.add(seg) else { continue }
                 DiagnosticLog.write("conversation detected")
@@ -145,6 +152,7 @@ final class FlowRuntime: ObservableObject {
             b.consentActive = session.consentActive
             b.wakeWordCollecting = session.wakeWordCollecting
             b.speakerTrusted = { [weak vad = s.vad] in vad?.isCalibrated ?? false }
+            b.rename = { [weak self] name in await self?.renameCurrentPerson(to: name) ?? Phrasebook.nobodyToUpdate }
             tasks += b.start(speech: s.transcriber.subscribe(), unparsed: wake?.subscribeUnparsed())
             r.askAssistant = { [weak b] question in await b?.ask(question) }
             brain = b
@@ -193,6 +201,34 @@ final class FlowRuntime: ObservableObject {
     func whoIsHere() { send(.whoIsHere) }
     func rememberThem() { send(.rememberThem) }
     func tapAnswer(yes: Bool) { consentFlow?.tapAnswer(yes: yes) }
+    func submitNumber(_ text: String?) { (consentFlow as? SpokenConsentFlow)?.enterNumber(text) }
+
+    /// "Poyo, change their contact to Anish": the remembered person in view (largest face), else the one saved in the
+    /// last 10 minutes. Renames the record, the iOS contact and the live label. Returns what to say.
+    func renameCurrentPerson(to rawName: String) async -> String {
+        let name = rawName.split(separator: " ").prefix(2).map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }.joined(separator: " ")
+        guard !name.isEmpty, let store = peopleStore, let s = services else { return Phrasebook.didNotGetThat }
+        let tracks = s.perception.currentTracks()
+        var target: (person: Person, track: Int?)?
+        if let t = tracks.filter({ $0.identity.isKnown }).max(by: { $0.faceHeightPx < $1.faceHeightPx }), let pid = t.identity.personID,
+           let p = store.all().first(where: { $0.id == pid }) {
+            target = (p, t.trackID)
+        } else if let p = lastSaved, p.consent.at > Date().addingTimeInterval(-600), let current = store.all().first(where: { $0.id == p.id }) {
+            target = (current, nil)
+        }
+        guard var (person, track) = target else {
+            return tracks.contains { !$0.identity.isKnown } ? Phrasebook.notInContactsYet : Phrasebook.nobodyToUpdate
+        }
+        let old = person.name
+        person.name = name
+        do { try store.add(person) } catch { return Phrasebook.didNotGetThat }
+        if let id = person.contactIdentifier, let cn = contacts as? CNContactsBridge { try? await cn.updateName(identifier: id, to: name) }
+        if let track { s.perception.assignIdentity(track: track, personID: person.id, name: name) }
+        if lastSaved?.id == person.id { lastSaved = person }
+        coordinator?.log("renamed \(old) → \(name)")
+        refreshPeople()
+        return Phrasebook.renamed(name)
+    }
     func cancelConsent() { send(.cancel) }
 
     var showsConsentCard: Bool {
