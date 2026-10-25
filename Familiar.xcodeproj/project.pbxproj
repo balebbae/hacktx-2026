@@ -153,6 +153,7 @@
 				A1B2C3D4E5F60718293A4B02 /* MWDATCamera */,
 				A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */,
 				A1B2C3D4E5F60718293A4B04 /* MWDATInputs */,
+				E1E2E3E4E5E60718293A4B05 /* ElevenLabs */,
 			);
 			productName = Familiar;
 			productReference = 206921FA0F7370D6772196A6 /* Familiar.app */;
@@ -189,6 +190,7 @@
 			packageReferences = (
 				274A53CAE3C52ACB43366862 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */,
 				5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */,
+				E1E2E3E4E5E60718293A4B00 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C8FA5AF39B14B1F1DBC424DF /* Products */;
@@ -510,6 +512,14 @@
 				version = 1.0.1;
 			};
 		};
+		E1E2E3E4E5E60718293A4B00 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/elevenlabs/elevenlabs-swift-sdk.git";
+			requirement = {
+				kind = exactVersion;
+				version = 3.4.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -537,6 +547,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATInputs;
+		};
+		E1E2E3E4E5E60718293A4B05 /* ElevenLabs */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1E2E3E4E5E60718293A4B00 /* XCRemoteSwiftPackageReference "elevenlabs-swift-sdk" */;
+			productName = ElevenLabs;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
