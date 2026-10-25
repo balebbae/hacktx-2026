@@ -12,6 +12,7 @@ enum Secrets {
     static var elevenLabsAPIKey: String? { value("ELEVENLABS_API_KEY") }
     static var elevenLabsVoiceID: String? { value("ELEVENLABS_VOICE_ID") }
     static var elevenLabsAgentID: String? { value("ELEVENLABS_AGENT_ID") }
+    static var elevenLabsModelID: String? { value("ELEVENLABS_MODEL_ID") }
     static var metaModelAPIKey: String? { value("META_MODEL_API_KEY") }
     /// Optional override for the vision model; unset = Meta Model API with `META_MODEL_API_KEY`.
     static var visionAPIURL: URL? { value("VISION_API_URL").flatMap(URL.init(string:)) }

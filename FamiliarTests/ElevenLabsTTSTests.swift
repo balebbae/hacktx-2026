@@ -33,7 +33,7 @@ final class ElevenLabsTTSTests: XCTestCase {
         XCTAssertEqual(sent.request.value(forHTTPHeaderField: "xi-api-key"), "test-key")
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: sent.body) as? [String: Any])
         XCTAssertEqual(body["text"] as? String, "Marcus, ahead, close.")
-        XCTAssertEqual(body["model_id"] as? String, "eleven_flash_v2_5")
+        XCTAssertEqual(body["model_id"] as? String, VoiceFactory.model)
         XCTAssertNotNil(body["voice_settings"])
         XCTAssertNotNil(body["previous_text"])
 

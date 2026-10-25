@@ -12,7 +12,8 @@ final class ElevenLabsTTS: SpeechSynthesizer, @unchecked Sendable {
     let model: String
     let cache: PhraseCache
     let session: URLSession
-    var firstByteTimeout: TimeInterval = 1.2
+    /// v4 turbo answers in about 1 s; a tighter limit would fall back to the Apple voice most of the time.
+    var firstByteTimeout: TimeInterval = 3
     var previousText = "Here is what I see."
     static let sampleRate: Double = 16_000
     private let semaphore: AsyncSemaphore

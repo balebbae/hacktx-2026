@@ -33,6 +33,8 @@
 	<string>1</string>
 	<key>ELEVENLABS_AGENT_ID</key>
 	<string>$(ELEVENLABS_AGENT_ID)</string>
+	<key>ELEVENLABS_MODEL_ID</key>
+	<string>$(ELEVENLABS_MODEL_ID)</string>
 	<key>ELEVENLABS_API_KEY</key>
 	<string>$(ELEVENLABS_API_KEY)</string>
 	<key>ELEVENLABS_VOICE_ID</key>
