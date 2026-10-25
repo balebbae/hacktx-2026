@@ -49,7 +49,8 @@ extension Phrasebook {
     set_mode(mode), call_person(name), text_person(name), mute. Repeat tool results almost verbatim. \
     Only these people may be named: {{known_names}}. Never name, describe or guess anyone else, even if you heard \
     their name; say someone. Never talk about faces or photos. Never agree to remember anyone yourself: only the \
-    remember_them tool can, and the other person must say yes to it. Never say the name of this app.
+    remember_them tool can, and the other person must say yes to it. Your name is Poyo, but never say it. \
+    Give directions as clock positions (12 o'clock is straight ahead).
     """
 }
 
@@ -183,7 +184,7 @@ final class AgentSession: ObservableObject, AgentConversationDelegate {
 
     // MARK: Input
 
-    /// A phrase addressed to the assistant: a "Familiar, …" phrase that is not a built-in command, or a button.
+    /// A phrase addressed to the assistant: a "Poyo, …" phrase that is not a built-in command, or a button.
     func ask(_ phrase: String) async {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -221,12 +222,8 @@ final class AgentSession: ObservableObject, AgentConversationDelegate {
         await speaker.speak(Utterance(text: text, priority: priority, category: "agent", personID: nil, dedupeKey: nil, audience: .user, earcon: false))
     }
 
-    /// nil for SKIP; the wake word never comes out of the speaker.
-    static func speakable(_ text: String) -> String? {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, !t.uppercased().hasPrefix("SKIP") else { return nil }
-        return t.replacingOccurrences(of: "\\bfamiliar\\b", with: "this app", options: [.regularExpression, .caseInsensitive])
-    }
+    /// nil for SKIP; the wake word and descriptions of people never come out of the speaker.
+    static func speakable(_ text: String) -> String? { SpeechSanitizer.clean(text, maxWords: 40) }
 
     // MARK: AgentConversationDelegate
 

@@ -66,6 +66,7 @@ final class SFSpeechTranscriber: NSObject, Transcriber, VolatileTextSource, @unc
         req.requiresOnDeviceRecognition = true
         req.shouldReportPartialResults = true
         req.addsPunctuation = true
+        req.contextualStrings = WakeWord.contextualStrings
         request = req
         requestStartedAt = t
         publishedWords = 0
@@ -81,10 +82,12 @@ final class SFSpeechTranscriber: NSObject, Transcriber, VolatileTextSource, @unc
         let segments = result.bestTranscription.segments
         guard let last = segments.last else { return }
         let latestEnd = last.timestamp + last.duration
-        volatileText = result.bestTranscription.formattedString
-        volatileBus.publish(VolatileText(text: volatileText, t: base + latestEnd))
         lock.lock()
         let from = publishedWords
+        // Only the words not yet published as a segment: the request's own text runs for 50 s, and a wake word
+        // in it would otherwise fire again on every partial.
+        volatileText = segments.dropFirst(from).map(\.substring).joined(separator: " ")
+        if !volatileText.isEmpty { volatileBus.publish(VolatileText(text: volatileText, t: base + latestEnd)) }
         var settled = segments.enumerated().filter { i, s in i >= from && (result.isFinal || latestEnd - (s.timestamp + s.duration) >= settleSeconds) }.map(\.element)
         if !result.isFinal, settled.count < 3 { settled = [] }
         guard let first = settled.first, let end = settled.last else { lock.unlock(); return }

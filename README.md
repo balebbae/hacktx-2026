@@ -1,6 +1,8 @@
 # Familiar — HackTX 2026
 
-Social awareness for blind and low-vision people on Ray-Ban Meta Gen 2 glasses. The glasses are camera, mic and speaker; the iPhone does the thinking. Only people who agreed are ever recognized; strangers are "a person" and faces never leave the phone.
+Social awareness for blind and low-vision people on Ray-Ban Meta Gen 2 glasses. The glasses are camera, mic and speaker; the iPhone does the thinking. Only people who agreed are ever recognized; strangers are "a person", and faces are blacked out on the phone before any image leaves it.
+
+**Poyo** is the always-on assistant ("Poyo, what's in front of me?"). It watches the view through a vision model (Meta `muse-spark-1.3` by default, with redacted frames), warns about walls, obstacles and hazards in the walking path, gives a one-line update when the scene changes, and answers questions with clock directions (12 o'clock = straight ahead). After an answer, a follow-up needs no wake word for 8 s.
 
 Start here:
 

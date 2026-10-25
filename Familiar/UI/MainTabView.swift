@@ -12,7 +12,7 @@ struct MainTabView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @StateObject private var runtime = FlowRuntime()
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
-    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
+    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
     @AppStorage(YouSettings.cueTextStaysOnScreen) private var cueTextStaysOnScreen = false
     @State private var tab: Tab = .today
     @State private var showReadiness = false
@@ -38,7 +38,10 @@ struct MainTabView: View {
                                 question: consentQuestion,
                                 onAnswer: { yes in runtime.tapAnswer(yes: yes) },
                                 onCancel: { runtime.cancelConsent() },
-                                levelProvider: { Double(coordinator.services?.audioInput.micLevel ?? 0) })
+                                levelProvider: { Double(coordinator.services?.audioInput.micLevel ?? 0) },
+                                numberEntry: runtime.numberEntry,
+                                userName: state.userName,
+                                onNumber: { runtime.submitNumber($0, name: $1) })
             }
             .fullScreenCover(isPresented: $previewConsentCard) {
                 ConsentCardView(state: .listening,
@@ -216,7 +219,8 @@ struct MainTabView: View {
         switch volumePrimary {
         case "rememberThem": rememberThem()
         case "pauseCues": togglePause()
-        default: whoIsHere()
+        case "whoIsHere": whoIsHere()
+        default: runtime.listenForPoyo()      // push-to-talk: works in a noisy room where "Poyo" may not be heard
         }
     }
 

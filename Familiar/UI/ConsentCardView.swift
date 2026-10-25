@@ -13,11 +13,85 @@ struct ConsentCardView: View {
     let onAnswer: (Bool) -> Void
     let onCancel: () -> Void
     var levelProvider: (() -> Double)? = nil
+    /// Set once they agreed and the wearer handed them the phone: show the number pad instead of YES / NO.
+    var numberEntry: SpokenConsentFlow.NumberRequest? = nil
+    var userName = ""
+    /// The typed number (nil = Skip) and the name as shown, possibly corrected by the person.
+    var onNumber: (String?, String) -> Void = { _, _ in }
     @Environment(\.visionScale) private var scale
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var yesBurst = 0
+    @State private var number = ""
+    @State private var name = ""
+    @FocusState private var numberFocused: Bool
 
     var body: some View {
+        if let entry = numberEntry { numberPad(entry) } else { questionScreen }
+    }
+
+    /// Once they agreed and the wearer handed them the phone: name (editable) and number, same canvas and pills.
+    private func numberPad(_ entry: SpokenConsentFlow.NumberRequest) -> some View {
+        VStack(spacing: 18) {
+            ScrollView {
+                VStack(spacing: 18) {
+                    MimoView(state: .success, size: 96, showsGlow: !scale.highContrast)
+                    VStack(spacing: 14) {
+                        Text("\(entry.name.map { "Thanks, \($0)! " } ?? "Thanks! ")Type your phone number for \(userName.isEmpty ? "the" : "\(userName)'s") contacts.")
+                            .font(FamiliarType.title(scale))
+                            .foregroundStyle(FamiliarPalette.ink(scale))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        entryField("Your name", text: $name)
+                            .textContentType(.givenName)
+                            .accessibilityLabel("Your name")
+                            .accessibilityHint("Fix the spelling if it is wrong")
+                        entryField("Phone number", text: $number)
+                            .keyboardType(.phonePad)
+                            .textContentType(.telephoneNumber)
+                            .focused($numberFocused)
+                            .accessibilityLabel("Phone number")
+                            .accessibilityHint("Your number is saved only in this phone's contacts")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(22)
+                    .background(FamiliarPalette.surface(scale), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous)
+                        .strokeBorder(FamiliarPalette.stroke(scale), lineWidth: scale.strokeWidth))
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            let layout: AnyLayout = tall ? AnyLayout(VStackLayout(spacing: 14)) : AnyLayout(HStackLayout(spacing: 14))
+            layout {
+                Button { onNumber(nil, name) } label: { pillText("Skip") }
+                    .buttonStyle(GhostPillStyle())
+                    .accessibilityHint("Saves the contact without a number")
+                Button { FamiliarHaptics.play(.consent); onNumber(number, name) } label: { pillText("Save") }
+                    .buttonStyle(AccentPillStyle())
+                    .disabled(PhoneNumber.digits(in: number).count < 7)
+                    .opacity(PhoneNumber.digits(in: number).count < 7 ? 0.5 : 1)
+                    .accessibilityHint("Saves this number with your contact")
+            }
+        }
+        .padding(FamiliarPalette.margin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .familiarCanvas()
+        .onAppear { name = entry.name ?? ""; numberFocused = true }
+    }
+
+    private func entryField(_ title: String, text: Binding<String>) -> some View {
+        TextField(title, text: text)
+            .font(FamiliarType.title(scale))
+            .foregroundStyle(FamiliarPalette.ink(scale))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 18)
+            .frame(minHeight: scale.hitTarget * 1.2)
+            .background(FamiliarPalette.canvas(scale), in: Capsule())
+            .overlay(Capsule().strokeBorder(FamiliarPalette.stroke(scale), lineWidth: scale.strokeWidth))
+    }
+
+    private var questionScreen: some View {
         VoiceGlow(type: .mobile, levelProvider: levelProvider, active: state == .listening, colorVariant: .ocean, cornerRadius: 0) {
             VStack(spacing: 18) {
                 cancelRow

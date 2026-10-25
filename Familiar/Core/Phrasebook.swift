@@ -1,29 +1,21 @@
 import Foundation
 
-/// Every spoken string in the app comes from here. No utterance may contain the word "Familiar" (the wake word).
+/// Every spoken string in the app comes from here. No utterance may contain the word "Poyo" (the wake word).
+/// Directions are clock positions from the true bearing (12 = straight ahead, 30° per hour).
 enum Phrasebook {
     // MARK: Cues
-    static func appeared(name: String, band: BearingBand, distance: Distance) -> String { "\(name), \(band.words), \(distance.words)." }
-    static func approaching(name: String, from band: BearingBand) -> String {
-        switch band {
-        case .left, .farLeft: return "\(name), coming from your left."
-        case .right, .farRight: return "\(name), coming from your right."
-        case .ahead: return "\(name), coming toward you."
-        }
+    static func clock(_ b: Bearing) -> String { "\(b.clock) o'clock" }
+    static func appeared(name: String, bearing: Bearing, distance: Distance) -> String { "\(name), \(clock(bearing)), \(distance.words)." }
+    static func approaching(name: String, from bearing: Bearing) -> String {
+        bearing.clock == 12 ? "\(name), coming toward you." : "\(name), coming from \(clock(bearing))."
     }
     static func arrived(name: String) -> String { "\(name), next to you." }
     static func left(name: String) -> String { "\(name) left." }
-    static func unknownClose(band: BearingBand) -> String {
-        switch band {
-        case .left, .farLeft: return "Someone close, on your left."
-        case .right, .farRight: return "Someone close, on your right."
-        case .ahead: return "Someone close, ahead."
-        }
-    }
+    static func unknownClose(bearing: Bearing) -> String { "Someone close, \(clock(bearing))." }
     static func speaking(name: String) -> String { "\(name)." }
 
     // MARK: Roll call
-    static func rollCallKnown(name: String, band: BearingBand, distance: Distance) -> String { appeared(name: name, band: band, distance: distance) }
+    static func rollCallKnown(name: String, bearing: Bearing, distance: Distance) -> String { appeared(name: name, bearing: bearing, distance: distance) }
     static func rollCallOthers(count: Int) -> String {
         switch count {
         case 0: return "No one else."
@@ -71,6 +63,23 @@ enum Phrasebook {
         case .obstacle: return "Obstacle ahead."
         }
     }
+    /// "1 meter", "3 meters" (whole meters, at least one).
+    static func meters(_ m: Double) -> String {
+        let n = max(1, Int(m.rounded()))
+        return n == 1 ? "1 meter" : "\(n) meters"
+    }
+    /// Something in the walking path, from the vision reading: "Wall ahead, 3 meters." / "Chair, 1 o'clock, close."
+    /// Under 1.5 m it says "close": the reading is seconds old, and a precise small number would mislead.
+    static func pathAlert(what: String?, bearing: Bearing, meters m: Double?) -> String {
+        let thing = capitalized(what ?? "obstacle")
+        let distance = m.map { $0 < 1.5 ? ", close" : ", \(meters($0))" } ?? ""
+        return bearing.clock == 12 ? "\(thing) ahead\(distance)." : "\(thing), \(clock(bearing))\(distance)."
+    }
+    /// "Stairs down, 12 o'clock, 3 meters."
+    static func sceneHazard(_ name: String, bearing: Bearing, meters m: Double?) -> String {
+        "\(capitalized(name)), \(clock(bearing))\(m.map { ", \(meters($0))" } ?? "")."
+    }
+    static func capitalized(_ s: String) -> String { s.prefix(1).uppercased() + s.dropFirst() }
     static func place(_ name: String) -> String { name.prefix(1).uppercased() + name.dropFirst() + "." }
     static let nothingToName = "Nothing I can name."
 
@@ -85,6 +94,20 @@ enum Phrasebook {
     static func unknownPerson(_ x: String) -> String { "I don't know anyone called \(x)." }
     static func notVisible(name: String) -> String { "I don't see \(name)." }
     static let didNotGetThat = "Sorry, I didn't get that."
+}
+
+extension Bearing {
+    /// 12 + round(degrees / 30), wrapped to 1…12. The glasses see ±26°, so anything in view is 11, 12 or 1.
+    var clock: Int {
+        let h = Int((degrees / 30).rounded())
+        return ((11 + h) % 12 + 12) % 12 + 1
+    }
+    /// A bearing at the centre of an hour, for prewarming and tests.
+    static func atClock(_ hour: Int) -> Bearing {
+        let offset = ((hour % 12) + 12) % 12          // 0 = 12 o'clock
+        let deg = Double(offset > 6 ? offset - 12 : offset) * 30
+        return Bearing(degrees: deg, band: deg < -7 ? .left : deg > 7 ? .right : .ahead)
+    }
 }
 
 extension BearingBand {

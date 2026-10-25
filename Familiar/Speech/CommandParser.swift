@@ -80,7 +80,7 @@ final class WakeWordCommandSource: CommandSource, @unchecked Sendable {
     func subscribe() -> AsyncStream<Command> { bus.subscribe() }
     func subscribeHits() -> AsyncStream<WakeWordHit> { hitBus.subscribe() }
 
-    // S8 — "Familiar, …" phrases the parser did not recognise fall through to the conversational agent.
+    // S8 — "Poyo, …" phrases the parser did not recognise fall through to the conversational agent.
     // Recognised commands keep flowing through `subscribe()` untouched; the agent never sees them.
     func subscribeUnparsed() -> AsyncStream<String> {
         let hits = hitBus.subscribe()
@@ -96,7 +96,7 @@ final class WakeWordCommandSource: CommandSource, @unchecked Sendable {
         }
     }
 
-    /// Feeds finals (and volatile text when the transcriber offers it) into the wake word and runs its 4 s timer.
+    /// Feeds finals (and volatile text when the transcriber offers it) into the wake word and runs its timer.
     func attach(_ transcriber: Transcriber) {
         let finals = transcriber.subscribe()
         tasks.append(Task.detached { [weak self] in
@@ -109,7 +109,7 @@ final class WakeWordCommandSource: CommandSource, @unchecked Sendable {
         }
         tasks.append(Task.detached { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try? await Task.sleep(nanoseconds: 100_000_000)
                 self?.wakeWord.tick(now: CACurrentMediaTime())
             }
         })

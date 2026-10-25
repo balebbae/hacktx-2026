@@ -40,7 +40,7 @@ enum SpeakerVolumeHint {
     static func gain(for u: Utterance) -> Float { powf(10, gainDB(for: u) / 20) }
 }
 
-/// Tries `primary` and falls back to `fallback` on any error (including the 1.2 s first-byte timeout).
+/// Tries `primary` and falls back to `fallback` on any error (including the 3 s first-byte timeout).
 final class FallbackSynthesizer: SpeechSynthesizer {
     let primary: SpeechSynthesizer
     let fallback: SpeechSynthesizer
@@ -106,7 +106,9 @@ enum SpeechPreferences {
 enum VoiceFactory {
     /// Sarah (premade, American, "mature, reassuring, confident"). Overridden by `ELEVENLABS_VOICE_ID`.
     static let defaultVoiceID = "EXAVITQu4vr4xnSDxMaL"
-    static let model = "eleven_flash_v2_5"
+    /// Same model as the dashboard agent, so Poyo sounds like the voice picked there. `ELEVENLABS_MODEL_ID`
+    /// overrides it (`eleven_flash_v2_5` is about 0.5 s faster to first byte but sounds flatter).
+    static var model: String { Secrets.elevenLabsModelID ?? "eleven_v4_turbo" }
 
     /// ElevenLabs (cached on disk) with Apple fallback when a key is present; Apple only otherwise. Both follow the
     /// wearer's speech rate (`SpeechPreferences`); volume is applied once, in the speaker.
@@ -117,7 +119,9 @@ enum VoiceFactory {
         let cache = cacheDirectory.map(PhraseCache.init(directory:)) ?? PhraseCache()
         let eleven = ElevenLabsTTS(apiKey: apiKey, voiceID: voiceID ?? defaultVoiceID, cache: cache, session: session)
         eleven.speedProvider = { SpeechPreferences.rateMultiplier() }
-        return FallbackSynthesizer(primary: eleven, fallback: apple)
+        let synth = FallbackSynthesizer(primary: eleven, fallback: apple)
+        synth.onFallback = { text, error in DiagnosticLog.write("TTS fell back to the Apple voice (\(error)): \(text)") }
+        return synth
     }
 
     /// The production speaker: priority queue over the given synthesizer and playback.
@@ -138,8 +142,10 @@ extension Phrasebook {
     static func prewarmSet(names: [String]) -> [String] {
         var out: [String] = []
         for name in names where !name.isEmpty {
-            for band in BearingBand.all { for distance in Distance.all { out.append(appeared(name: name, band: band, distance: distance)) } }
-            for band in [BearingBand.left, .right, .ahead] { out.append(approaching(name: name, from: band)) }
+            for hour in [11, 12, 1] {
+                for distance in Distance.all { out.append(appeared(name: name, bearing: .atClock(hour), distance: distance)) }
+                out.append(approaching(name: name, from: .atClock(hour)))
+            }
             out.append(arrived(name: name))
             out.append(left(name: name))
             out.append(speaking(name: name))
@@ -158,10 +164,26 @@ extension Phrasebook {
         var out: [String] = [nobody]
         for k in 0...4 { out.append(rollCallOthers(count: k)) }
         for k in 1...4 { out.append(rollCallNoKnown(count: k)) }
-        for band in [BearingBand.left, .right, .ahead] { out.append(unknownClose(band: band)) }
+        for hour in [11, 12, 1] { out.append(unknownClose(bearing: .atClock(hour))) }
         out += [shouldIAdd, scanningFace, lookTowardMe, wasThatAYes, whatShouldICallYou, nothingSaved, theyLeft]
         out += ChatterMode.allCases.map(mode)
         out += [muted, unmuted, didNotGetThat]
+        out += alertPhrases
         return out
     }
+
+    /// The vision alerts most likely indoors, so they play without a TTS round trip (prewarmed at every start).
+    static var alertPhrases: [String] {
+        var out: [String] = []
+        for thing in ["wall", "door", "glass door", "chair", "table", "couch", "counter", "desk", "obstacle", "pillar", "stairs"] {
+            for m in [nil, 1.0, 2, 3, 4] as [Double?] { out.append(pathAlert(what: thing, bearing: .atClock(12), meters: m)) }
+            for hour in [11, 1] { out.append(pathAlert(what: thing, bearing: .atClock(hour), meters: 1)) }
+        }
+        return out
+    }
+}
+
+extension Utterance {
+    /// Played the moment a "Poyo, …" request is heard; interrupts whatever is playing.
+    static let heardYou = Utterance(text: "", priority: 0, category: "chime", personID: nil, dedupeKey: nil, audience: .user, earcon: true)
 }

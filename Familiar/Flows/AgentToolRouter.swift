@@ -106,28 +106,28 @@ final class AgentToolRouter {
         let needle = name.lowercased()
         let tracks = perception.currentTracks()
         if let t = tracks.first(where: { ($0.identity.name ?? "").lowercased().hasPrefix(needle) }), let n = t.identity.name {
-            return Phrasebook.rollCallKnown(name: n, band: t.bearing.band, distance: t.distance)
+            return Phrasebook.rollCallKnown(name: n, bearing: t.bearing, distance: t.distance)
         }
         if let seen = lastSeen().values.filter({ $0.name.lowercased().hasPrefix(needle) }).max(by: { $0.at < $1.at }) {
-            return Phrasebook.lastSeen(name: seen.name, band: seen.bearing.band)
+            return Phrasebook.lastSeen(name: seen.name, bearing: seen.bearing)
         }
         if let p = peopleStore.find(name: name) { return Phrasebook.notVisible(name: p.name) }
         return Phrasebook.unknownPerson(name)
     }
 
-    /// Silent context pushed to the agent when it changes, e.g. "Visible now: Marcus ahead close; 2 other people."
+    /// Silent context pushed to the agent when it changes, e.g. "Visible now: Marcus 12 o'clock close; 2 other people."
     func sceneContext() -> String {
         let around = surroundings(nil)
         return Self.sceneContext(tracks: perception.currentTracks()) + (around == Phrasebook.nothingToName ? "" : " Around: \(around)")
     }
 
-    static func sceneContext(tracks: [TrackSnapshot]) -> String {
+    nonisolated static func sceneContext(tracks: [TrackSnapshot]) -> String {
         var names: [String] = []
         var seen = Set<UUID>()
         var others = 0
         for t in tracks.sorted(by: { $0.bearing.degrees < $1.bearing.degrees }) {
             if case let .known(pid, name, _) = t.identity {
-                if seen.insert(pid).inserted { names.append("\(name) \(t.bearing.band.words) \(t.distance.words)") }
+                if seen.insert(pid).inserted { names.append("\(name) \(Phrasebook.clock(t.bearing)) \(t.distance.words)") }
             } else { others += 1 }
         }
         if names.isEmpty && others == 0 { return "Visible now: no one." }

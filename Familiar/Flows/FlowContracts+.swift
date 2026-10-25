@@ -14,6 +14,14 @@ struct ConsentFlowConfig {
     var wearerAskTimeout: TimeInterval = 15
     var reaskTimeout: TimeInterval = 4
     var nameTimeout: TimeInterval = 6
+    /// How long to wait for the other person's number, and how long the digits must stay unchanged before it counts
+    /// (a full 10 digits, or a shorter number after a longer pause).
+    var numberTimeout: TimeInterval = 60
+    var numberSettle: TimeInterval = 1
+    var numberPause: TimeInterval = 3
+    /// Before coaching, wait until nobody has spoken for `pauseNeeded` seconds (give up waiting after `pauseMaxWait`).
+    var pauseNeeded: TimeInterval = 2.5
+    var pauseMaxWait: TimeInterval = 30
     var minEmbeddings = 3
     var minQuality: Float = 0.3
     var clipLead: TimeInterval = 0.5
@@ -121,6 +129,11 @@ struct LastSeen: Equatable { let name: String; let personID: UUID; let bearing: 
 struct ConversationWindow {
     var seconds: TimeInterval = 45
     var words = 40
+    /// Off on the phone: the loudness split cannot reliably tell the wearer from someone a metre away, and the
+    /// router already requires an unknown person nearby.
+    var requireBothSides = true
+    /// From the first to the last segment in the window, so a few loud sentences are not "a conversation".
+    var minDuration: TimeInterval = 0
     private var items: [(t: TimeInterval, words: Int, speaker: SpeakerGuess)] = []
 
     /// Adds a final segment; true (and starts over) once the window holds a conversation.
@@ -128,7 +141,8 @@ struct ConversationWindow {
         items.append((seg.end, seg.text.split(separator: " ").count, seg.speaker))
         items.removeAll { $0.t < seg.end - seconds }
         guard items.reduce(0, { $0 + $1.words }) >= words,
-              items.contains(where: { $0.speaker == .user }), items.contains(where: { $0.speaker == .other }) else { return false }
+              (items.last?.t ?? 0) - (items.first?.t ?? 0) >= minDuration,
+              !requireBothSides || (items.contains(where: { $0.speaker == .user }) && items.contains(where: { $0.speaker == .other })) else { return false }
         items.removeAll()
         return true
     }
@@ -143,14 +157,54 @@ final class ManualCommandSource: CommandSource, @unchecked Sendable {
 
 extension Phrasebook {
     /// Not in Core's vocabulary; needed by `whereIs` once the person has left the frame.
-    static func lastSeen(name: String, band: BearingBand) -> String {
-        switch band {
-        case .left, .farLeft: return "I last saw \(name) on your left."
-        case .right, .farRight: return "I last saw \(name) on your right."
-        case .ahead: return "I last saw \(name) ahead of you."
-        }
-    }
+    static func lastSeen(name: String, bearing: Bearing) -> String { "I last saw \(name) at \(clock(bearing))." }
     static let noOneToRemember = nobody
+
+    // Coaching the wearer through adding someone (spoken only in the glasses).
+    static let coachAskConsent = "You're talking with someone new. Ask if they'd like to be added to your contacts, and to look at the camera."
+    static let coachLookAtCamera = "Ask them to look at the camera."
+    static let coachAskName = "Ask their name."
+    static func coachAskNumber(name: String?) -> String { name.map { "Now ask \($0) for their number." } ?? "Now ask for their number." }
+    static func coachHandPhone(name: String?) -> String { "Hand \(name ?? "them") your phone so they can type their number." }
+    static func renamed(_ name: String) -> String { "Updated. That's \(name) now." }
+    static let nobodyToUpdate = "I don't see anyone in your contacts to update."
+    static let notInContactsYet = "They're not in your contacts yet."
+    static let whatName = "What's their name?"
+    /// "Got 5 1 2, 5 5 5, 0 1 0 0." — digit by digit so the wearer can check it.
+    static func gotNumber(_ digits: String) -> String {
+        let d = Array(digits)
+        let groups: [ArraySlice<Character>]
+        if d.count == 10 { groups = [d[0..<3], d[3..<6], d[6..<10]] }
+        else if d.count == 11, d.first == "1" { groups = [d[0..<1], d[1..<4], d[4..<7], d[7..<11]] }
+        else { groups = [d[...]] }
+        return "Got " + groups.map { $0.map(String.init).joined(separator: " ") }.joined(separator: ", ") + "."
+    }
+    static let noNumber = "No number. Saving without it."
+}
+
+/// Phone numbers from speech: numerals ("512-555-0100") and digit words ("five one two"), across pieces.
+enum PhoneNumber {
+    private static let words: [String: Character] = ["zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"]
+
+    static func digits(in text: String) -> String {
+        var out = ""
+        var previousWasDigit = false
+        for token in text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+            if token.allSatisfy(\.isNumber) { out += token; previousWasDigit = true }
+            else if let d = words[String(token)] { out.append(d); previousWasDigit = true }
+            else if (token == "oh" || token == "o"), previousWasDigit { out += "0" }
+            else { previousWasDigit = false }
+        }
+        return out
+    }
+
+    /// "(512) 555-0100", "+1 (512) 555-0100", otherwise the digits.
+    static func format(_ d: String) -> String {
+        let c = Array(d)
+        if c.count == 10 { return "(\(String(c[0..<3]))) \(String(c[3..<6]))-\(String(c[6..<10]))" }
+        if c.count == 11, c[0] == "1" { return "+1 (\(String(c[1..<4]))) \(String(c[4..<7]))-\(String(c[7..<11]))" }
+        return d
+    }
 }
 
 /// Builds the flows. S5 calls these from `Services.make`.

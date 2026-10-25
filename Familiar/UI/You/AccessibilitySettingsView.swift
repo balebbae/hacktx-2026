@@ -156,7 +156,7 @@ struct AccessibilitySettingsView: View {
     /// One sample cue through every channel: the speaker, the text toast and the cue haptic. No dedupe key, so every
     /// tap is audible (the toast and the haptic fire per tap too).
     private func previewSettings() {
-        let text = Phrasebook.appeared(name: "Maya", band: .right, distance: .close)
+        let text = Phrasebook.appeared(name: "Maya", bearing: .atClock(2), distance: .close)
         previewText = text
         previewCount += 1
         FamiliarHaptics.play(.cue)

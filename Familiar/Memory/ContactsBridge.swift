@@ -61,6 +61,19 @@ final class CNContactsBridge: ContactsBridge, @unchecked Sendable {
         return contact.identifier
     }
 
+    /// Renames a contact this app created ("Poyo, change their contact to Anish").
+    func updateName(identifier: String, to name: String) async throws {
+        guard try await requestAccess() else { throw BridgeError.accessDenied }
+        let keys: [CNKeyDescriptor] = [CNContactGivenNameKey as CNKeyDescriptor]
+        let contact: CNContact
+        do { contact = try store.unifiedContact(withIdentifier: identifier, keysToFetch: keys) } catch { throw BridgeError.notFound(identifier) }
+        guard let mutable = contact.mutableCopy() as? CNMutableContact else { return }
+        mutable.givenName = name
+        let request = CNSaveRequest()
+        request.update(mutable)
+        try store.execute(request)
+    }
+
     func delete(identifier: String) async throws {
         guard try await requestAccess() else { throw BridgeError.accessDenied }
         let keys: [CNKeyDescriptor] = [CNContactIdentifierKey as CNKeyDescriptor]

@@ -26,7 +26,7 @@ final class CommandRouterTests: XCTestCase {
     func testWhoIsHereSpeaksRollCall() async {
         perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .left, distance: .medium), FakePerception.track(2)]
         await router.handle(.whoIsHere)
-        XCTAssertEqual(speaker.texts.last, "Marcus, left, medium. One other person.")
+        XCTAssertEqual(speaker.texts.last, "Marcus, 12 o'clock, medium. One other person.")
     }
 
     func testModesAndMute() async {
@@ -46,13 +46,13 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(speaker.texts.last, "I don't see Marcus.")
         perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .right, distance: .far)]
         await router.handle(.whereIs("marcus"))
-        XCTAssertEqual(speaker.texts.last, "Marcus, right, far.")
+        XCTAssertEqual(speaker.texts.last, "Marcus, 12 o'clock, far.")
         router.startObserving()
         perception.publish(.knownLeft(personID: marcusID, name: "Marcus", last: Bearing(degrees: -40, band: .farLeft)))
         perception.tracks = []
         try? await Task.sleep(nanoseconds: 100_000_000)
         await router.handle(.whereIs("mar"))
-        XCTAssertEqual(speaker.texts.last, Phrasebook.lastSeen(name: "Marcus", band: .farLeft))
+        XCTAssertEqual(speaker.texts.last, Phrasebook.lastSeen(name: "Marcus", bearing: Bearing(degrees: -40, band: .farLeft)))
         router.stop()
     }
 
@@ -91,7 +91,35 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(speaker.texts.last, "Stairs ahead. Kitchen.", "no people line when nobody is in view")
         perception.tracks = [FakePerception.track(1, identity: .known(personID: marcusID, name: "Marcus", score: 0.8), band: .ahead, distance: .close)]
         await router.handle(.describeSurroundings)
-        XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, ahead, close. No one else. Kitchen.")
+        XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, 12 o'clock, close. No one else. Kitchen.")
+    }
+
+    func testContactOfferNeedsTheSameNewPersonFaceToFaceFor20Seconds() async {
+        router.startObserving()
+        let stranger = FakePerception.track(5, distance: .close)
+        perception.tracks = [stranger]
+        func see() async { perception.publish(.snapshot(tracks: [stranger], preview: nil)); try? await Task.sleep(nanoseconds: 50_000_000) }
+        await see()
+        await router.conversationDetected(at: now)
+        XCTAssertEqual(flow.begins, [], "a face that just turned up is not a conversation partner")
+        now += 21
+        await see()
+        await router.conversationDetected(at: now)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(flow.begins, [true])
+        now += 400
+        await see()
+        await router.conversationDetected(at: now)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(flow.begins, [true], "offered once per person")
+        router.stop()
+    }
+
+    func testConversationWindowOnThePhoneCountsWordsFromAnyone() {
+        var w = ConversationWindow(); w.words = 10; w.requireBothSides = false
+        let seg = { (t: TimeInterval, n: Int) in TranscriptSegment(text: Array(repeating: "word", count: n).joined(separator: " "), start: t - 1, end: t, isFinal: true, speaker: .user) }
+        XCTAssertFalse(w.add(seg(1, 6)))
+        XCTAssertTrue(w.add(seg(2, 6)), "the loudness split cannot be trusted; a nearby unknown face is checked by the router")
     }
 
     func testConversationWindowNeedsBothSides() {

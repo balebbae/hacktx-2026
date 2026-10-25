@@ -142,7 +142,7 @@ struct PrivacyDashboardView: View {
         if modalOn {
             return "The Modal fallback is on: aligned 112 by 112 face crops go to the embedding server and are discarded there. Remove MODAL_EMBED_URL from Secrets.xcconfig to turn it off."
         }
-        return "Strangers are never named or stored. Cloud services only ever receive text."
+        return "Strangers are never named or stored. Cloud services get text, and the vision model gets frames with every face blacked out."
     }
 
     private var removeTitle: String { YouCopy.removeEveryoneTitle(peopleCount) }

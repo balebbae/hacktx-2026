@@ -18,12 +18,16 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var consentState: ConsentState = .idle
     @Published private(set) var fps: Double = 0
     @Published private(set) var lastError: String?
+    /// Latest vision reading (judge view).
+    @Published private(set) var sceneReading: SceneReading?
     /// Deep link waiting for the UI (`familiar://introduce` from an NFC tag opens the self-enroll flow). HomeView clears it.
     @Published var pendingRoute: AppRoute?
 
     private var tasks: [Task<Void, Never>] = []
     private weak var state: AppState?
     private var frameTimes: [TimeInterval] = []
+    private var narration = NarrationPolicy()
+    private var lastCaptionAt: TimeInterval = -.infinity
 
     /// True when the app is only the XCTest host: the live pipeline stays off so background tasks never interfere with tests.
     static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
@@ -60,6 +64,25 @@ final class AppCoordinator: ObservableObject {
             tasks.append(Task { for await v in vad.subscribe() { s.cueGate.userSpeaking = v.isSpeech && v.guess == .user } })
         }
         s.scene.start(frames: s.frameSource)
+        narration = NarrationPolicy()
+        lastCaptionAt = -.infinity
+        sceneReading = nil
+        s.cloudScene.trackedFaces = { [weak perception = s.perception] in perception?.currentTracks().map(\.faceBox) ?? [] }
+        s.scene.faces = { [weak perception = s.perception] in perception?.currentTracks() ?? [] }
+        s.scene.speechActive = { [weak transcriber = s.transcriber] in !(transcriber?.recentSegments(seconds: 5).isEmpty ?? true) }
+        s.motion.start()
+        s.scene.onExpansion = { [weak motion = s.motion] rate, t in motion?.noteExpansion(rate, at: t) }
+        s.cloudScene.isMoving = { [weak motion = s.motion] in motion?.isMoving() ?? false }
+        s.cloudScene.start(frames: s.frameSource)
+        // Alerts must play the moment they are decided: fill the TTS cache for them once (kept on disk).
+        tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.alertPhrases + Phrasebook.actionAlertPhrases) })
+        if let voice = s.speaker as? VoiceSpeaker {
+            voice.onSpoken = { DiagnosticLog.write("said[p\($0.utterance.priority) \($0.utterance.category)\($0.source == "apple" ? " apple" : "")] \($0.utterance.text)") }
+            voice.onDropped = { u, why in DiagnosticLog.write("dropped[\(u.category)] \(why): \(u.text)") }
+        }
+        tasks.append(Task { [weak self] in
+            for await r in s.cloudScene.subscribe() { await self?.handle(reading: r, services: s, state: state) }
+        })
         tasks.append(Task { [weak self] in
             for await e in s.scene.subscribe() { self?.handle(scene: e, services: s, state: state) }
         })
@@ -75,7 +98,10 @@ final class AppCoordinator: ObservableObject {
             })
         }
         tasks.append(Task { [weak self] in
-            for await seg in s.transcriber.subscribe() { await MainActor.run { self?.transcript = Array((self?.transcript ?? []).suffix(39)) + [seg] } }
+            for await seg in s.transcriber.subscribe() {
+                if seg.isFinal { DiagnosticLog.heard(seg) }
+                await MainActor.run { self?.transcript = Array((self?.transcript ?? []).suffix(39)) + [seg] }
+            }
         })
         tasks.append(Task { [weak self] in
             for await st in s.consentFlow.subscribe() { await MainActor.run { self?.consentState = st; self?.log("consent → \(st)") } }
@@ -151,6 +177,8 @@ final class AppCoordinator: ObservableObject {
         tasks.removeAll()
         services?.perception.stop()
         services?.scene.stop()
+        services?.cloudScene.stop()
+        services?.motion.stop()
         services?.frameSource.stop()
         services?.transcriber.stop()
         services?.speaker.stopAll()
@@ -166,24 +194,62 @@ final class AppCoordinator: ObservableObject {
             log(describe(event))
         }
         let now = CACurrentMediaTime()
+        // Face to face with someone: only a friend arriving is worth a word; approach / left / speaking cues wait.
+        let talking = conversationActive(s)
         for u in s.cuePolicy.utterances(for: event, mode: state.mode, now: now) where s.cueGate.admit(u) {
+            if talking, u.priority >= 1, !["appeared", "arrived"].contains(u.category) { continue }
+            if u.category == "left", let pid = u.personID {
+                // Tracks flicker in a crowd: say "Marcus left." only if he is still gone a few seconds later.
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(4))
+                    guard s.perception.currentTracks().allSatisfy({ $0.identity.personID != pid }), !(self?.conversationActive(s) ?? true) else { return }
+                    await s.speaker.speak(u)
+                }
+                continue
+            }
             Task { await s.speaker.speak(u) }
         }
     }
 
-    /// Hazards are spoken at once (priority 0, even when muted); a new place only in chatty mode.
+    /// Hazards are spoken at once (priority 0, even when muted); a new place only in chatty mode; action captions per
+    /// `ActionCaption.utterance`.
     private func handle(scene e: SceneEvent, services s: Services, state: AppState) {
         log("scene \(e)")
         let u: Utterance
         switch e {
         case let .hazard(kind):
+            guard s.motion.isMoving() else { return }        // standing still: not about to walk into it
             u = Utterance(text: Phrasebook.hazard(kind), priority: 0, category: "hazard", personID: nil, dedupeKey: "hazard:\(kind.rawValue)", audience: .user, earcon: true)
         case let .placeChanged(place):
-            guard state.mode == .chatty else { return }
+            guard state.mode == .chatty, !conversationActive(s) else { return }
             u = Utterance(text: Phrasebook.place(place), priority: 3, category: "place", personID: nil, dedupeKey: "place", audience: .user, earcon: false)
+        case let .action(c):
+            let now = CACurrentMediaTime()
+            // A dialogue gap: nothing heard in the last 1.5 s, like audio description between a film's lines.
+            guard let a = ActionCaption.utterance(for: c, mode: state.mode, moving: s.motion.isMoving(), inConversation: conversationActive(s),
+                                                  inDialogueGap: s.transcriber.recentSegments(seconds: 1.5).isEmpty, sinceLast: now - lastCaptionAt) else { return }
+            lastCaptionAt = now
+            u = a
         }
         guard s.cueGate.admit(u) else { return }
         Task { await s.speaker.speak(u) }
+    }
+
+    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed.
+    private func handle(reading r: SceneReading, services s: Services, state: AppState) {
+        sceneReading = r
+        log("vision \(r.path.rawValue)\(r.pathMeters.map { " \($0) m" } ?? ""): \(r.summary)")
+        for u in narration.utterances(for: r, mode: state.mode, now: CACurrentMediaTime(), inConversation: conversationActive(s), moving: s.motion.isMoving()) where s.cueGate.admit(u) {
+            Task { await s.speaker.speak(u) }
+        }
+    }
+
+    /// Face to face with someone: speech in the last 12 s while a person is near (close or medium) and facing the
+    /// wearer. Speech alone is not enough: in a packed room someone is always talking. The voice split cannot tell
+    /// the wearer from others, so it is not used.
+    func conversationActive(_ s: Services) -> Bool {
+        guard s.perception.currentTracks().contains(where: { $0.distance != .far && $0.isFacingUser }) else { return false }
+        return s.transcriber.recentSegments(seconds: 12).contains { $0.isFinal && $0.text.split(separator: " ").count >= 2 }
     }
 
     private func noteFrame(at t: TimeInterval) {
@@ -193,6 +259,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func log(_ text: String) {
+        DiagnosticLog.write(text)
         events = Array(events.suffix(199)) + [LoggedEvent(at: CACurrentMediaTime(), text: text)]
     }
 

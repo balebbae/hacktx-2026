@@ -16,7 +16,7 @@ struct CommunicatePage: View {
     @State private var localVoice = OnboardingSampleVoice()
 
     /// The one cue every preview uses. Maya is the demo's consenting friend.
-    static let sampleCue = Phrasebook.appeared(name: "Maya", band: .right, distance: .close)
+    static let sampleCue = Phrasebook.appeared(name: "Maya", bearing: .atClock(2), distance: .close)
 
     var body: some View {
         OnboardingPageScaffold(eyebrow: "Your way",

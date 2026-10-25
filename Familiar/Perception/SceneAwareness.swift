@@ -12,6 +12,8 @@ enum SceneEvent: Equatable, Sendable {
     case hazard(HazardKind)
     /// The stable place changed (e.g. "kitchen"); spoken only in chatty mode.
     case placeChanged(String)
+    /// What the closest person or group is doing ("Someone crossing, left to right, close.").
+    case action(ActionCaption)
 }
 
 /// Pure decisions over on-device Vision outputs: image labels (≈1 Hz) and looming time-to-contact (≈4 Hz).
@@ -31,7 +33,7 @@ struct HazardPolicy {
     var hazardConfidence: Float = 0.5
     var hazardVotes = 2
     var hazardWindow = 3
-    var obstacleTimeToContact: Double = 1.2
+    var obstacleTimeToContact: Double = 1.8
     var obstacleFrames = 2
     var cooldown: TimeInterval = 8
     var placeConfidence: Float = 0.4
@@ -100,8 +102,15 @@ struct HazardPolicy {
 final class SceneAwareness: @unchecked Sendable {
     var classifyInterval: TimeInterval = 1.0
     var flowInterval: TimeInterval = 0.25
+    /// Inverse time-to-contact of the centre of view (0 = nothing approaching) at every flow pass; `MotionState`.
+    var onExpansion: ((Double, TimeInterval) -> Void)?
+    /// Perception's face tracks, so action captions can name agreed people and tell who faces the wearer.
+    var faces: () -> [TrackSnapshot] = { [] }
+    /// Someone spoke in the last few seconds: a group is "talking together".
+    var speechActive: () -> Bool = { false }
     private let bus = EventBus<SceneEvent>()
     private let policy = OSAllocatedUnfairLock(initialState: HazardPolicy())
+    private let captioner = OSAllocatedUnfairLock(initialState: ActionCaptioner())
     private var task: Task<Void, Never>?
     private let ciContext = CIContext(options: [.workingColorSpace: NSNull(), .outputColorSpace: NSNull(), .cacheIntermediates: false])
     private var previous: (buffer: CVPixelBuffer, t: TimeInterval)?
@@ -127,6 +136,9 @@ final class SceneAwareness: @unchecked Sendable {
 
     func describe(people: String? = nil) -> String { policy.withLock { $0.describe(now: CACurrentMediaTime(), people: people) } }
 
+    /// Action captions from the last 10 s, for the assistant.
+    func currentActions() -> String? { captioner.withLock { $0.recentText(now: CACurrentMediaTime()) } }
+
     private func process(_ frame: Frame) {
         let now = frame.timestamp
         if now - lastClassify >= classifyInterval {
@@ -137,8 +149,16 @@ final class SceneAwareness: @unchecked Sendable {
         }
         if now - lastFlow >= flowInterval {
             lastFlow = now
-            let ttc = timeToContact(frame)
+            let (ttc, pan) = flowPass(frame)
+            onExpansion?(ttc.map { 1 / $0 } ?? 0, now)
             if let e = policy.withLock({ $0.flow(timeToContact: ttc, now: now) }) { bus.publish(e) }
+            if let bodies = humans(frame) {
+                let faces = faces(), speech = speechActive()
+                if let c = captioner.withLock({ $0.update(bodies: bodies, faces: faces, panRate: pan, speech: speech, now: now,
+                                                          hFOV: frame.horizontalFOVDegrees, vFOV: frame.verticalFOVDegrees) }) {
+                    bus.publish(.action(c))
+                }
+            }
         }
     }
 
@@ -155,22 +175,58 @@ final class SceneAwareness: @unchecked Sendable {
         return labels
     }
 
-    /// Mean divergence of the optical flow in the centre square of a 160 px-wide copy, as seconds to contact.
-    /// A surface approaching at time-to-contact τ expands with du/dx + dv/dy = 2Δt/τ; head turns add almost none.
-    private func timeToContact(_ frame: Frame) -> Double? {
-        guard let small = downscaled(frame.pixelBuffer, width: 160) else { return nil }
+    /// Whole-body boxes (normalized, top-left origin), or nil when Vision cannot run.
+    private func humans(_ frame: Frame) -> [CGRect]? {
+        let request = VNDetectHumanRectanglesRequest()
+        request.upperBodyOnly = false
+        do {
+            try VNImageRequestHandler(cvPixelBuffer: frame.pixelBuffer, orientation: frame.orientation, options: [:]).perform([request])
+        } catch {
+            failedOnce(error)
+            return nil
+        }
+        return (request.results ?? []).map { o in
+            let b = o.boundingBox
+            return CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+        }
+    }
+
+    /// One optical-flow pass over a 160 px-wide copy. Time to contact: mean divergence in the centre square; a surface
+    /// approaching at time-to-contact τ expands with du/dx + dv/dy = 2Δt/τ, head turns add almost none. Pan: °/s,
+    /// positive = head turning right, so action captions can tell a head turn from someone crossing.
+    private func flowPass(_ frame: Frame) -> (ttc: Double?, pan: Double) {
+        guard let small = downscaled(frame.pixelBuffer, width: 160) else { return (nil, 0) }
         defer { previous = (small, frame.timestamp) }
         guard let prev = previous, frame.timestamp - prev.t > 0.05, frame.timestamp - prev.t < 1,
-              CVPixelBufferGetWidth(prev.buffer) == CVPixelBufferGetWidth(small) else { return nil }
+              CVPixelBufferGetWidth(prev.buffer) == CVPixelBufferGetWidth(small) else { return (nil, 0) }
         let request = VNGenerateOpticalFlowRequest(targetedCVPixelBuffer: prev.buffer, options: [:])
         request.computationAccuracy = .low
         request.outputPixelFormat = kCVPixelFormatType_TwoComponent32Float
-        do { try VNImageRequestHandler(cvPixelBuffer: small, options: [:]).perform([request]) } catch { failedOnce(error); return nil }
-        guard let flow = request.results?.first?.pixelBuffer else { return nil }
+        do { try VNImageRequestHandler(cvPixelBuffer: small, options: [:]).perform([request]) } catch { failedOnce(error); return (nil, 0) }
+        guard let flow = request.results?.first?.pixelBuffer else { return (nil, 0) }
+        let dt = frame.timestamp - prev.t
+        // Flow points from `small` back to the previous frame: content that slid left (head turned right) reads as +u.
+        // shortcut: assumes u is in pixels of the 160 px copy; check the sign and scale on glasses footage.
+        let pan = Self.medianHorizontalFlow(flow) / 160 * frame.horizontalFOVDegrees / dt
         // Flow is from `small` toward the previous frame, so expansion since then reads as negative divergence.
         let div = -Self.centreDivergence(flow)
-        guard div > 0 else { return nil }
-        return 2 * (frame.timestamp - prev.t) / div
+        guard div > 0 else { return (nil, pan) }
+        return (2 * dt / div, pan)
+    }
+
+    /// Median horizontal flow over a sparse grid: the background (camera pan), not the one person walking through it.
+    static func medianHorizontalFlow(_ flow: CVPixelBuffer) -> Double {
+        CVPixelBufferLockBaseAddress(flow, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(flow, .readOnly) }
+        let w = CVPixelBufferGetWidth(flow), h = CVPixelBufferGetHeight(flow), rowBytes = CVPixelBufferGetBytesPerRow(flow)
+        guard let base = CVPixelBufferGetBaseAddress(flow), w > 8, h > 8 else { return 0 }
+        var us: [Float] = []
+        for y in stride(from: 2, to: h - 2, by: 4) {
+            let row = (base + y * rowBytes).assumingMemoryBound(to: Float.self)
+            for x in stride(from: 2, to: w - 2, by: 4) { us.append(row[2 * x]) }
+        }
+        us.sort()
+        return us.isEmpty ? 0 : Double(us[us.count / 2])
     }
 
     static func centreDivergence(_ flow: CVPixelBuffer) -> Double {

@@ -68,7 +68,7 @@ struct PrivacyPromiseContent: View {
                 .visionIcon(scale, base: 20)
                 .foregroundStyle(FamiliarPalette.ocean(scale))
                 .accessibilityHidden(true)
-            Text("Only text ever leaves the phone.")
+            Text("Faces are blacked out before any image leaves the phone.")
                 .font(FamiliarType.title(scale))
                 .foregroundStyle(FamiliarPalette.ink(scale))
                 .fixedSize(horizontal: false, vertical: true)

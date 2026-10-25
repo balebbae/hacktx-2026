@@ -10,16 +10,17 @@ struct SettingsView: View {
     @AppStorage(UserSettings.voiceProvider) private var voiceProvider = "elevenlabs"
     @AppStorage(UserSettings.matchThreshold) private var matchThreshold = 0.40
     @AppStorage(UserSettings.audioRoute) private var audioRoute = "auto"
-    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
+    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
     /// Default on: the cue policy has always said "Marcus." when a known person starts talking (`SpeechPreferences`).
     @AppStorage(SpeechPreferences.speakingCueKey) private var cueSpeaking = true
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
+    @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
     @State private var calibrating = false
     @State private var calibration: String?
 
     private static let voiceOptions: [(String, String)] = [("elevenlabs", "ElevenLabs"), ("apple", "Apple")]
     /// "pauseCues" is the fixed mute action spec 20.4 asks for; `MainTabView` handles all three.
-    private static let volumeOptions: [(String, String)] = [("whoIsHere", "Who's here"), ("rememberThem", "Remember"), ("pauseCues", "Pause")]
+    private static let volumeOptions: [(String, String)] = [("askPoyo", "Ask Poyo"), ("whoIsHere", "Who's here"), ("rememberThem", "Remember"), ("pauseCues", "Pause")]
 
     var body: some View {
         ScrollView {
@@ -27,6 +28,7 @@ struct SettingsView: View {
                 intro
                 youSection
                 voiceSection
+                assistantSection
                 recognitionSection
                 cuesSection
                 keysSection
@@ -73,7 +75,7 @@ struct SettingsView: View {
                 audioRoutePicker
             }
             YouDivider(inset: YouMetrics.plainInset)
-            YouChoiceRow(title: "Volume button", detail: "What a press of a volume button triggers") {
+            YouChoiceRow(title: "Volume button", detail: "What a press of a volume button triggers. Ask Poyo: click, then talk") {
                 SlidingPillSegment(options: Self.volumeOptions, selection: $volumePrimary, label: "Volume button")
             }
             YouDivider(inset: YouMetrics.plainInset)
@@ -82,6 +84,18 @@ struct SettingsView: View {
                          systemImage: "speaker.wave.2",
                          isOn: $state.speakLogSpeakerAloud)
         }
+    }
+
+    private static let brainOptions: [(String, String)] = [("vision", "Vision model"), ("elevenlabs", "ElevenLabs agent")]
+
+    private var assistantSection: some View {
+        YouSection(title: "Assistant",
+                   footer: "The vision model gets camera frames with every face blacked out. The ElevenLabs agent gets text only.") {
+            YouChoiceRow(title: "Poyo runs on", detail: "Vision model sees the view. ElevenLabs agent is text only") {
+                SlidingPillSegment(options: Self.brainOptions, selection: $assistantBrain, label: "Poyo runs on")
+            }
+        }
+        .onChange(of: assistantBrain) { _, _ in Task { await coordinator.restart(source: state.source) } }
     }
 
     private var audioRoutePicker: some View {
@@ -130,6 +144,8 @@ struct SettingsView: View {
             keyRow("ElevenLabs agent", Secrets.elevenLabsAgentID != nil)
             YouDivider()
             keyRow("Meta Model API key", Secrets.metaModelAPIKey != nil)
+            YouDivider()
+            keyRow("Vision model", coordinator.services?.cloudScene.isConfigured ?? false)
             YouDivider()
             keyRow("Modal endpoint", Secrets.modalEmbedURL != nil)
             YouDivider()

@@ -73,7 +73,7 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(requests.first?.dynamicVariables["user_name"], "Caleb")
         XCTAssertEqual(requests.first?.dynamicVariables["known_names"], "Marcus")
         XCTAssertTrue(requests.first?.prompt.contains("at most 12 words") ?? false)
-        XCTAssertEqual(c.contexts.first, "Visible now: Marcus ahead close; 2 other people.")
+        XCTAssertEqual(c.contexts.first, "Visible now: Marcus 12 o'clock close; 2 other people.")
         await settle(0.2)
         XCTAssertEqual(c.contexts.count, 1, "unchanged context is not re-sent")
         perception.tracks = []
@@ -85,7 +85,7 @@ final class AgentSessionTests: XCTestCase {
         let live = await startLive(); let c = try XCTUnwrap(live)
         transcriber.emit(.init(speaker: .user, text: "where did I put my keys"))
         transcriber.emit(.init(speaker: .other, text: "I'm Dana, by the way"))
-        transcriber.emit(.init(speaker: .user, text: "Familiar, mute"))
+        transcriber.emit(.init(speaker: .user, text: "Poyo, mute"))
         await waitUntil { c.contexts.contains("Other person said: I'm Dana, by the way") }
         await settle()
         XCTAssertEqual(c.messages, ["[overheard] where did I put my keys"])
@@ -103,10 +103,10 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(speaker.entries.last?.utterance.priority, 0)
         gate.muted = true
         c.delegate?.conversationAgentSaid("Marcus is behind you.")
-        c.delegate?.conversationAgentSaid("Familiar can see two chairs.")
+        c.delegate?.conversationAgentSaid("Poyo, can see two chairs.")
         await settle()
         XCTAssertEqual(speaker.texts, ["Three people, Marcus ahead."], "unsolicited remarks obey mute")
-        XCTAssertTrue(session.transcript.contains { $0.role == .agent && $0.text == "this app can see two chairs." })
+        XCTAssertTrue(session.transcript.contains { $0.role == .agent && $0.text == "Can see two chairs." })
     }
 
     func testConsentHoldsTheAgent() async throws {
@@ -179,8 +179,8 @@ final class AgentSessionTests: XCTestCase {
         var parsed: [Command] = []
         let t2 = Task { for await c in commands { parsed.append(c); break } }
         await settle(0.02)
-        source.wakeWord.feed(text: "Familiar, who is here", isFinal: true, t: 1)
-        source.wakeWord.feed(text: "Familiar, how many people are around me", isFinal: true, t: 10)
+        source.wakeWord.feed(text: "Poyo, who is here", isFinal: true, t: 1)
+        source.wakeWord.feed(text: "Poyo, how many people are around me", isFinal: true, t: 10)
         await settle(0.1)
         source.wakeWord.tick(now: 30)
         await waitUntil { got.count == 1 && parsed.count == 1 }
@@ -188,6 +188,6 @@ final class AgentSessionTests: XCTestCase {
         XCTAssertEqual(parsed, [.whoIsHere])
         XCTAssertEqual(got.count, 1)
         XCTAssertTrue(got.first?.lowercased().contains("how many people") ?? false, "\(got)")
-        XCTAssertFalse(got.first?.lowercased().contains("familiar") ?? true, "wake word is stripped from the phrase")
+        XCTAssertFalse(got.first?.lowercased().contains("poyo") ?? true, "wake word is stripped from the phrase")
     }
 }

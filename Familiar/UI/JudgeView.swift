@@ -319,6 +319,9 @@ struct RoomView: View {
                 Text("\(state.source.title) · \(runtime.people.count) remembered · name guess \(runtime.nameGuess?.name ?? "–")")
                     .font(FamiliarType.mono(scale))
                     .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+                if let brain = runtime.brain {
+                    PoyoPanel(brain: brain, reading: coordinator.sceneReading, scene: coordinator.services?.cloudScene)
+                }
                 if let agent = runtime.agent {
                     AgentPanel(session: agent)
                 }
@@ -451,7 +454,7 @@ struct RoomView: View {
 
 /// Kept for the privacy banner text and older call sites; the Room tab is the judge-facing screen now.
 struct JudgeView: View {
-    static let banner = "Known people only. Strangers are \"a person\". Faces never leave this phone."
+    static let banner = "Known people only. Strangers are \"a person\". Faces are blacked out before any image leaves this phone."
     var body: some View { RoomView() }
 }
 
@@ -478,6 +481,48 @@ struct JudgeView: View {
         .clipShape(RoundedRectangle(cornerRadius: FamiliarPalette.cardRadius, style: .continuous))
         .padding(FamiliarPalette.margin)
         .familiarCanvas()
+}
+
+// MARK: - Poyo (vision brain + always-on scene)
+
+struct PoyoPanel: View {
+    @ObservedObject var brain: PoyoBrain
+    let reading: SceneReading?
+    let scene: CloudScene?
+    @Environment(\.visionScale) private var scale
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                if let upload = scene?.lastUpload {
+                    Image(decorative: upload, scale: 1).resizable().aspectRatio(contentMode: .fit).frame(width: 72)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .accessibilityLabel("Last image sent to the vision model, faces blacked out")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(reading.map { "\($0.path.rawValue) · \($0.summary)" } ?? "no scene reading yet")
+                        .font(FamiliarType.supporting(scale))
+                        .foregroundStyle(FamiliarPalette.ink(scale))
+                    let st = scene?.status
+                    Text("uploads \(st?.uploads ?? 0) · scene \(st?.lastLatency.map { String(format: "%.1f s", $0) } ?? "–") · answer \(brain.lastLatency.map { String(format: "%.1f s", $0) } ?? "–")\(brain.busy ? " · thinking" : "")")
+                        .font(FamiliarType.mono(scale))
+                        .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+                    if let e = st?.lastError {
+                        Text(e).font(FamiliarType.micro(scale)).foregroundStyle(FamiliarPalette.danger)
+                    }
+                }
+            }
+            Button("Ask Poyo: what's in front of me?") { Task { await brain.ask("what's in front of me?") } }
+                .font(FamiliarType.supporting(scale))
+                .frame(minHeight: scale.hitTarget)
+                .accessibilityHint("Sends a scripted question to Poyo")
+            ForEach(brain.lines.suffix(6)) { line in
+                Text("\(line.role.rawValue): \(line.text)")
+                    .font(FamiliarType.supporting(scale))
+                    .foregroundStyle(FamiliarPalette.ink(scale))
+            }
+        }
+    }
 }
 
 // MARK: - S8 agent status (own view so `@ObservedObject` refreshes it without Combine plumbing)

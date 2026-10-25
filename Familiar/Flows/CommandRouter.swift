@@ -15,6 +15,8 @@ final class CommandRouter: ObservableObject {
     private let rollCall: ([TrackSnapshot]) -> String
     /// What's around: hazards, then the given people line, then place and objects (`SceneAwareness.describe`).
     var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
+    /// Set when Poyo runs on the vision model: "what's around me" is answered from the live view instead.
+    var askAssistant: ((String) async -> Void)?
     private let clock: () -> TimeInterval
     private var tasks: [Task<Void, Never>] = []
     private var lastGoodbyeFlowAt: TimeInterval = -.infinity
@@ -26,6 +28,11 @@ final class CommandRouter: ObservableObject {
     var goodbyeCooldown: TimeInterval = 60
     var conversationCooldown: TimeInterval = 180
     private var lastConversationOfferAt: TimeInterval = -.infinity
+    /// How long an unknown person must have been near and facing the wearer before a conversation counts as one
+    /// with them (in a packed room there is always talk and always a face somewhere).
+    var faceToFaceSeconds: TimeInterval = 20
+    private var nearSince: [Int: (first: TimeInterval, last: TimeInterval)] = [:]
+    private var offeredTracks: Set<Int> = []
 
     init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCall.phrase(tracks:), clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
         self.perception = perception; self.speaker = speaker; self.cueGate = cueGate; self.consentFlow = consentFlow
@@ -71,6 +78,10 @@ final class CommandRouter: ObservableObject {
         switch e {
         case let .snapshot(tracks, _):
             for t in tracks { if case let .known(pid, name, _) = t.identity { lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: t.bearing, at: now) } }
+            for t in tracks where !t.identity.isKnown && t.distance != .far && t.isFacingUser {
+                nearSince[t.trackID] = (nearSince[t.trackID]?.first ?? now, now)
+            }
+            nearSince = nearSince.filter { now - $0.value.last < 3 }      // a glance away is fine; walking off is not
         case let .knownLeft(pid, name, last): lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: last, at: now)
         default: break
         }
@@ -82,7 +93,7 @@ final class CommandRouter: ObservableObject {
         handled.append(c)
         switch c {
         case .whoIsHere:
-            await say(rollCall(perception.currentTracks()), priority: 1, category: "rollcall", dedupe: "rollcall", earcon: true)
+            await say(rollCall(perception.currentTracks()), priority: 0, category: "rollcall", dedupe: "rollcall")
         case .rememberThem:
             guard !consentActive else { return }
             Task { await consentFlow.begin(confirmFirst: false) }
@@ -107,8 +118,9 @@ final class CommandRouter: ObservableObject {
             consentFlow.cancel()
             speaker.stopAll()
         case .describeSurroundings:
+            if let ask = askAssistant { await ask("What's around me?"); return }
             let tracks = perception.currentTracks()
-            await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 1, category: "surroundings")
+            await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 0, category: "surroundings")
         case .repeatLast:
             if let u = lastUtterance { await speaker.speak(u) } else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
         }
@@ -122,13 +134,13 @@ final class CommandRouter: ObservableObject {
         let needle = name.lowercased()
         let tracks = perception.currentTracks()
         if let t = tracks.first(where: { ($0.identity.name ?? "").lowercased().hasPrefix(needle) }), let n = t.identity.name {
-            await say(Phrasebook.rollCallKnown(name: n, band: t.bearing.band, distance: t.distance), priority: 1, category: "whereis"); return
+            await say(Phrasebook.rollCallKnown(name: n, bearing: t.bearing, distance: t.distance), priority: 0, category: "whereis"); return
         }
         if let seen = lastSeen.values.filter({ $0.name.lowercased().hasPrefix(needle) }).max(by: { $0.at < $1.at }) {
-            await say(Phrasebook.lastSeen(name: seen.name, band: seen.bearing.band), priority: 1, category: "whereis"); return
+            await say(Phrasebook.lastSeen(name: seen.name, bearing: seen.bearing), priority: 0, category: "whereis"); return
         }
-        if let p = peopleStore.find(name: name) { await say(Phrasebook.notVisible(name: p.name), priority: 1, category: "whereis"); return }
-        await say(Phrasebook.unknownPerson(name), priority: 1, category: "whereis")
+        if let p = peopleStore.find(name: name) { await say(Phrasebook.notVisible(name: p.name), priority: 0, category: "whereis"); return }
+        await say(Phrasebook.unknownPerson(name), priority: 0, category: "whereis")
     }
 
     /// Goodbye → offer to remember, only if a stranger is close, no flow is active and the cooldown passed.
@@ -145,8 +157,12 @@ final class CommandRouter: ObservableObject {
     /// cooldown, so a "no" is not re-asked every minute of the same chat.
     func conversationDetected(at t: TimeInterval) async {
         guard !consentActive, t - lastConversationOfferAt >= conversationCooldown, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
-        let strangerNear = perception.currentTracks().contains { !$0.identity.isKnown && $0.distance != .far }
-        guard strangerNear else { return }
+        let now = clock()
+        let partner = perception.currentTracks().first { tr in
+            !tr.identity.isKnown && !offeredTracks.contains(tr.trackID) && (nearSince[tr.trackID].map { now - $0.first >= faceToFaceSeconds } ?? false)
+        }
+        guard let partner else { DiagnosticLog.write("conversation: nobody new face to face for \(Int(faceToFaceSeconds)) s, not offering"); return }
+        offeredTracks.insert(partner.trackID)                           // once per person, whatever they answer
         lastConversationOfferAt = t
         lastGoodbyeFlowAt = t
         Task { await consentFlow.begin(confirmFirst: true) }

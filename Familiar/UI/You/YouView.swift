@@ -148,7 +148,7 @@ private struct YouMottoFooter: View {
                 .font(FamiliarType.supporting(scale))
                 .foregroundStyle(FamiliarPalette.inkSecondary(scale))
                 .multilineTextAlignment(.center)
-            Text("Faces and consent clips stay on this phone. Only text leaves it.")
+            Text("Faces and consent clips stay on this phone. Faces are blacked out before any image leaves it.")
                 .font(FamiliarType.micro(scale))
                 .foregroundStyle(FamiliarPalette.inkSecondary(scale))
                 .multilineTextAlignment(.center)

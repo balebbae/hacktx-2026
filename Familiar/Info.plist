@@ -33,12 +33,20 @@
 	<string>1</string>
 	<key>ELEVENLABS_AGENT_ID</key>
 	<string>$(ELEVENLABS_AGENT_ID)</string>
+	<key>ELEVENLABS_MODEL_ID</key>
+	<string>$(ELEVENLABS_MODEL_ID)</string>
 	<key>ELEVENLABS_API_KEY</key>
 	<string>$(ELEVENLABS_API_KEY)</string>
 	<key>ELEVENLABS_VOICE_ID</key>
 	<string>$(ELEVENLABS_VOICE_ID)</string>
 	<key>META_MODEL_API_KEY</key>
 	<string>$(META_MODEL_API_KEY)</string>
+	<key>VISION_API_URL</key>
+	<string>$(VISION_API_URL)</string>
+	<key>VISION_API_KEY</key>
+	<string>$(VISION_API_KEY)</string>
+	<key>VISION_MODEL</key>
+	<string>$(VISION_MODEL)</string>
 	<key>MODAL_EMBED_URL</key>
 	<string>$(MODAL_EMBED_URL)</string>
 	<key>MODAL_KEY</key>

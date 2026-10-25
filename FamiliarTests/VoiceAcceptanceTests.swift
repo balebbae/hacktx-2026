@@ -58,12 +58,12 @@ final class VoiceAcceptanceTests: XCTestCase {
         logLock.lock(); let lines = log; logLock.unlock()
 
         XCTAssertEqual(speaker.spoken.map(\.utterance.text), [
-            "Marcus, far right, far.",
-            "Marcus, coming from your right.",
+            "Marcus, 1 o'clock, far.",
+            "Marcus, coming toward you.",
             "Marcus, next to you.",
             "Marcus.",
             "Marcus left.",
-            "Marcus, left, medium.",
+            "Marcus, 12 o'clock, medium.",
             "Marcus, next to you.",
         ])
         print("[VoiceAcceptanceTests] spoken:\n" + lines.joined(separator: "\n"))
@@ -71,7 +71,7 @@ final class VoiceAcceptanceTests: XCTestCase {
         XCTAssertFalse(speaker.spoken.contains { $0.utterance.text.localizedCaseInsensitiveContains("someone") }, "strangers are silent in normal mode")
 
         // Wake word → command → roll call over the final scene (Marcus close ahead, no strangers).
-        let transcriber = FakeTranscriber(text: "other: Hi, I'm Marcus.\nuser: Familiar, who's here?", interval: 0.01)
+        let transcriber = FakeTranscriber(text: "other: Hi, I'm Marcus.\nuser: Poyo, who's here?", interval: 0.01)
         let commands = SpeechFactory.makeCommandSource(transcriber: transcriber)
         let stream = commands.subscribe()
         try await transcriber.start(audio: SilentAudioInput())
@@ -81,7 +81,7 @@ final class VoiceAcceptanceTests: XCTestCase {
         XCTAssertEqual(command, .whoIsHere)
         for _ in 0..<40 where perception.currentTracks().count != 1 { try await Task.sleep(nanoseconds: 50_000_000) }   // let the last script event land under load
         let rollCall = RollCall.utterance(tracks: perception.currentTracks())
-        XCTAssertTrue(rollCall.text.hasPrefix("Marcus, ahead, close."), rollCall.text)
+        XCTAssertTrue(rollCall.text.hasPrefix("Marcus, 12 o'clock, close."), rollCall.text)
         await speaker.speak(rollCall)
         XCTAssertEqual(speaker.spoken.last?.utterance.text, rollCall.text)
 
