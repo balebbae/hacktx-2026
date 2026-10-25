@@ -16,9 +16,6 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     /// Set by S6 while the glasses stream their mic; Route B is then refused.
     var glassesStreamActive = false
     var speakingTail: TimeInterval = 0.3
-    /// True while the ElevenLabs agent owns the mic (S8). Its WebRTC stack re-routes the session (16 kHz voice
-    /// chat); restarting our engine then would fight it for the input node.
-    var suspendedForAgent = false
     var isRunning: Bool { engine.isRunning }
     var lastError: String?
 
@@ -171,7 +168,6 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     /// Re-install the tap with the new input format and restart the engine.
     func rebuild(reason: String) {
         queue.async { [self] in
-            guard !suspendedForAgent else { return }
             removeTap()
             if engine.isRunning { engine.stop() }
             do { try startLocked() } catch { lastError = "rebuild after \(reason) failed: \(error.localizedDescription)" }
@@ -183,7 +179,7 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     var isSpeaking: Bool { speakingState.withLock { $0.speaking } }
 
     func play(_ audio: SynthesizedAudio, audience: Audience) async -> ClosedRange<TimeInterval>? {
-        guard !suspendedForAgent, engine.isRunning || (try? start()) != nil, engine.isRunning else { return nil }
+        guard engine.isRunning || (try? start()) != nil, engine.isRunning else { return nil }
         guard let buffer = makeBuffer(audio) else { return nil }
         let session = AVAudioSession.sharedInstance()
         if audience == .otherPerson { try? session.overrideOutputAudioPort(.speaker) }
@@ -195,7 +191,7 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
         let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let completed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             playLock.withLock { $0.continuation = cont }
-            // `.dataPlayedBack` never fires if the engine stops mid-buffer (route change, agent takeover); without
+            // `.dataPlayedBack` never fires if the engine stops mid-buffer (route change, interruption); without
             // this the caller — e.g. the consent flow — would wait forever.
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(duration + 2))

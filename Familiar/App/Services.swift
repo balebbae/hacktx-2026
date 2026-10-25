@@ -45,9 +45,12 @@ final class Services: ObservableObject {
     let yesNo: YesNoClassifier
     let consentFlow: ConsentFlow
     let commandSources: [CommandSource]
-    // S8 — the agent pauses/restarts the engine around a session and refuses while a glasses stream is live.
-    var agentAudio: AgentAudioControl?
-    var isGlassesStreaming: () -> Bool = { false }
+    /// What the transcriber hears: the mic with the app's own speech blanked out, so it never answers itself.
+    lazy var transcriberAudio: AudioInput = audioInput
+    /// Wearer/other loudness split; Settings calibrates it to the wearer's voice.
+    var vad: LoudnessSplit?
+    /// On-device scene and hazard awareness over the same frames.
+    let scene = SceneAwareness()
 
     /// Convenience accessors for the skeleton UI (nil when the real module is wired instead).
     var logSpeaker: LogSpeaker? { speaker as? LogSpeaker }
@@ -106,6 +109,7 @@ final class Services: ObservableObject {
         }
 
         let vad = AudioFactory.makeVoiceActivity(audio: engine.rawInput)
+        if let rms = defaults.object(forKey: UserSettings.userVoiceRMS) as? Float { vad.userRMS = rms }
         // MARK: S7 — who is talking to me. VAD `.other` speech + mouth-openness variance of known, facing tracks
         // → `speakingStarted` once per track-session. Lives on the real pipeline only (ScriptedPerception scripts it).
         if let pipeline = perception as? PerceptionPipeline {
@@ -118,14 +122,13 @@ final class Services: ObservableObject {
         #if targetEnvironment(simulator)
         transcriber = FakeTranscriber(transcriptNamed: "conversation") ?? FakeTranscriber(text: "")
         #else
-        transcriber = SpeechFactory.makeTranscriber(speakerGuess: { vad.guess(at: $0) }, speechDetected: nil)
+        transcriber = SpeechFactory.makeTranscriber(speakerGuess: { vad.guess(at: $0) }, speechDetected: { vad.noteExternalSpeech($0, at: $1) })
         #endif
         let commands: [CommandSource] = [SpeechFactory.makeCommandSource(transcriber: transcriber)]
 
         let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: peopleStore, contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
-        // S8
-        services.agentAudio = engine
-        services.isGlassesStreaming = { [weak engine] in engine?.glassesStreamActive ?? false }
+        services.transcriberAudio = engine.transcriberInput
+        services.vad = vad
         return services
     }
 }

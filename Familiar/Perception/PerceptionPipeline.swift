@@ -56,7 +56,7 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
     struct Stats: Equatable { var framesProcessed = 0; var embeddings = 0; var detectMillis = 0.0; var embedMillis = 0.0; var fps = 0.0 }
     private let statsLock = OSAllocatedUnfairLock(initialState: Stats())
     var stats: Stats { statsLock.withLock { $0 } }
-    /// Every accepted/rejected match score, for the cosine distributions in the test log.
+    /// Recent accepted/rejected match scores (last ≤ 500), for the cosine distributions in the test log.
     private(set) var matchLog: [(trackID: Int, personName: String?, bestScore: Float, accepted: Bool)] = []
     private let matchLogLock = OSAllocatedUnfairLock(initialState: ())
 
@@ -181,7 +181,7 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
             let emb = FaceEmbedding(modelID: embedder.modelID, vector: vector, quality: quality, timestamp: now, thumbnailJPEG: thumb)
             let gal = gallery?.gallery() ?? Gallery(modelID: embedder.modelID, people: [])
             let match = matcher.match(vector, gallery: gal, modelID: embedder.modelID)
-            matchLogLock.withLock { _ in matchLog.append((t.id, match.name ?? (match.bestScore > 0 ? gal.people.max { a, b in (a.embeddings.map { Matcher.cosine($0, vector) }.max() ?? 0) < (b.embeddings.map { Matcher.cosine($0, vector) }.max() ?? 0) }?.name : nil), match.bestScore, match.accepted)) }
+            matchLogLock.withLock { _ in if matchLog.count >= 500 { matchLog.removeFirst(100) }; matchLog.append((t.id, match.name ?? (match.bestScore > 0 ? gal.people.max { a, b in (a.embeddings.map { Matcher.cosine($0, vector) }.max() ?? 0) < (b.embeddings.map { Matcher.cosine($0, vector) }.max() ?? 0) }?.name : nil), match.bestScore, match.accepted)) }
             let becameKnown: Bool = lock.withLock { _ in
                 t.addEmbedding(ScoredEmbedding(embedding: emb, yawDegrees: t.yawDegrees ?? 0), max: tracker.config.maxEmbeddings)
                 return t.votes.record(match)

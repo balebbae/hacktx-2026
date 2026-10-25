@@ -39,7 +39,7 @@ struct TranscriptSegment { let text: String; let start: TimeInterval; let end: T
 protocol Transcriber: AnyObject { func subscribe() -> AsyncStream<TranscriptSegment>; func start(audio: AudioInput) async throws; func stop(); func recentSegments(seconds: TimeInterval) -> [TranscriptSegment] }
 protocol VoiceActivity: AnyObject { func subscribe() -> AsyncStream<(isSpeech: Bool, guess: SpeakerGuess, t: TimeInterval)>; func calibrateUser(seconds: Double) async }
 enum ChatterMode { case quiet, normal, chatty }
-enum Command { case whoIsHere, rememberThem, setMode(ChatterMode), mute, unmute, call(String), text(String), whereIs(String), cancel, repeatLast }
+enum Command { case whoIsHere, rememberThem, setMode(ChatterMode), mute, unmute, call(String), text(String), whereIs(String), cancel, repeatLast, describeSurroundings }
 protocol CommandSource: AnyObject { func subscribe() -> AsyncStream<Command> }
 
 enum Audience { case user, otherPerson }

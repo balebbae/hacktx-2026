@@ -10,6 +10,8 @@ struct ConsentFlowConfig {
     var gatherTimeout: TimeInterval = 2
     var extraGatherTimeout: TimeInterval = 4
     var listenTimeout: TimeInterval = 6
+    /// The wearer asks in their own words, so the other person's answer comes later than after our own question.
+    var wearerAskTimeout: TimeInterval = 15
     var reaskTimeout: TimeInterval = 4
     var nameTimeout: TimeInterval = 6
     var minEmbeddings = 3
@@ -115,6 +117,23 @@ enum WAVWriter {
 /// Where a known person was last seen (for "where is X" after they left the frame).
 struct LastSeen: Equatable { let name: String; let personID: UUID; let bearing: Bearing; let at: TimeInterval }
 
+/// "A conversation": at least `words` words within `seconds`, with both the wearer and someone else talking.
+struct ConversationWindow {
+    var seconds: TimeInterval = 45
+    var words = 40
+    private var items: [(t: TimeInterval, words: Int, speaker: SpeakerGuess)] = []
+
+    /// Adds a final segment; true (and starts over) once the window holds a conversation.
+    mutating func add(_ seg: TranscriptSegment) -> Bool {
+        items.append((seg.end, seg.text.split(separator: " ").count, seg.speaker))
+        items.removeAll { $0.t < seg.end - seconds }
+        guard items.reduce(0, { $0 + $1.words }) >= words,
+              items.contains(where: { $0.speaker == .user }), items.contains(where: { $0.speaker == .other }) else { return false }
+        items.removeAll()
+        return true
+    }
+}
+
 /// A `CommandSource` you can push into (buttons, demo controls, tests).
 final class ManualCommandSource: CommandSource, @unchecked Sendable {
     private let bus = EventBus<Command>()
@@ -142,7 +161,7 @@ enum FlowFactory {
     }
 
     @MainActor
-    static func makeCommandRouter(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCallSkeleton.phrase) -> CommandRouter {
+    static func makeCommandRouter(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCall.phrase(tracks:)) -> CommandRouter {
         CommandRouter(perception: perception, speaker: speaker, cueGate: cueGate, consentFlow: consentFlow, peopleStore: peopleStore, contacts: contacts, setMode: setMode, setMuted: setMuted, rollCall: rollCall)
     }
 }

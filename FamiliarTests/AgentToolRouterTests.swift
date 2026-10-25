@@ -24,7 +24,7 @@ final class AgentToolRouterTests: XCTestCase {
     }
 
     func testToolNamesMatchDashboardList() {
-        XCTAssertEqual(AgentToolRouter.toolNames, ["who_is_here", "where_is", "remember_them", "set_mode", "call_person", "text_person", "mute"])
+        XCTAssertEqual(AgentToolRouter.toolNames, ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute"])
     }
 
     func testWhoIsHereReturnsRollCallText() async {
@@ -32,7 +32,7 @@ final class AgentToolRouterTests: XCTestCase {
         let r = await router.handle(AgentToolCall(name: "who_is_here"))
         XCTAssertEqual(r.text, RollCall.phrase(tracks: perception.tracks))
         XCTAssertEqual(r.text, "Marcus, left, medium. One other person.")
-        XCTAssertFalse(r.isError); XCTAssertFalse(r.endsSession)
+        XCTAssertFalse(r.isError)
     }
 
     func testWhoIsHereEmptyRoom() async {
@@ -63,13 +63,19 @@ final class AgentToolRouterTests: XCTestCase {
         XCTAssertTrue(r.isError)
     }
 
-    func testRememberThemEndsSessionThenBeginsConsent() async {
+    func testRememberThemStartsTheAppAskedConsentFlow() async {
         let r = await router.handle(AgentToolCall(name: "remember_them"))
-        XCTAssertEqual(r.text, "Starting.")
-        XCTAssertTrue(r.endsSession)
-        XCTAssertEqual(flow.begins, [], "consent must not start before the session has ended")
-        await r.afterEnd?()
-        XCTAssertEqual(flow.begins, [false])
+        XCTAssertEqual(r.text, "Asking them now.")
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(flow.begins, [false], "the app asks the other person itself; the agent never decides consent")
+    }
+
+    func testDescribeSurroundingsPutsPeopleAfterHazards() async {
+        router.surroundings = { people in "Stairs ahead. " + (people ?? "") + " Kitchen." }
+        perception.tracks = [FakePerception.track(2)]
+        let r = await router.handle(AgentToolCall(name: "describe_surroundings"))
+        XCTAssertEqual(r.text, "Stairs ahead. No one I know. 1 person. Kitchen.")
+        XCTAssertTrue(router.sceneContext().hasSuffix("Around: Stairs ahead.  Kitchen."), router.sceneContext())
     }
 
     func testSetModeMapsWords() async {

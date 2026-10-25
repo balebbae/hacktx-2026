@@ -1,21 +1,21 @@
 # Familiar — shared context for every Devin session (read fully before acting)
 
 ## What this is
-Familiar is an iOS app (SwiftUI) for blind and low-vision people wearing Ray-Ban Meta Gen 2 glasses. The glasses are camera, mic and speaker; the iPhone does the thinking. It tells the wearer which **consented** people are around ("Marcus, ahead, close."), who is approaching or leaving, and it remembers a new person only after that person says "yes" out loud or taps YES. Hackathon demo for HackTX 2026 (submission Sun Oct 25 11:30 AM CDT, judging 2–5 PM, table-side, 2–4 people in view). Not production code: optimise for a working demo, honest fallbacks, and code a human can run on an iPhone in five minutes.
+Familiar is an iOS app (SwiftUI) for blind and low-vision people wearing Ray-Ban Meta Gen 2 glasses. The glasses are camera, mic and speaker; the iPhone does the thinking. It tells the wearer which **consented** people are around ("Marcus, ahead, close."), who is approaching or leaving, warns about hazards ("Stairs ahead.", "Obstacle ahead."), keeps an always-on assistant that follows the conversation, and it remembers a new person only after that person says "yes" out loud or taps YES. Hackathon demo for HackTX 2026 (submission Sun Oct 25 11:30 AM CDT, judging 2–5 PM, table-side, 2–4 people in view). Not production code: optimise for a working demo, honest fallbacks, and code a human can run on an iPhone in five minutes.
 
 ## Non-negotiable product rules (they also appear on the judge-view banner)
 1. Only people who agreed are ever recognized. A stranger is "a person" or "someone": never a name, never a description, never stored.
-2. Agreement happens on the other person's side (their spoken yes or their tap). The wearer cannot add someone unilaterally. The other person may also enroll themselves by picking up the phone ("Introduce yourself" button or an NFC tag / `familiar://introduce`) and tapping YES on their own.
-3. Faces, embeddings and consent clips live only on this phone. Cloud services receive **text only** (TTS strings; transcript snippets for name extraction). One exception: the optional Modal embedding fallback receives aligned 112×112 face crops and discards them.
+2. Agreement happens on the other person's side (their spoken yes or their tap). The wearer cannot add someone unilaterally. When Familiar notices a conversation with someone it does not know, it asks the wearer "Should I add this person to your contacts?"; if the wearer agrees, the wearer asks the person in their own words and only that person's yes (or tap) saves anything; then the name is asked if it was not caught, "I'm going to scan your face.", scan, save. The other person may also enroll themselves by picking up the phone ("Introduce yourself" button or an NFC tag / `familiar://introduce`) and tapping YES on their own. The assistant (LLM) never decides consent.
+3. Faces, embeddings, consent clips and camera frames live only on this phone; scene and hazard detection runs on the device (Apple Vision). Cloud services receive **text only**: TTS strings, the transcript and the people/scene summary for the ElevenLabs agent (strangers only as a count), transcript snippets for name extraction. One exception: the optional Modal embedding fallback receives aligned 112×112 face crops and discards them.
 4. Anyone can be removed. Removal deletes everything: the record, thumbnail, consent clip and the iOS contact the app created.
 5. The glasses' recording LED stays on; never hide that the camera is on.
 6. Never speak for the user and never send a message on their behalf: open the dialer or Messages and let them act. Never keep audio beyond a rolling 90 s transcript in RAM and the few-second consent clip.
 7. No mood reading. Cues are limited to presence, approach/leave, speaking first (stretch), wave/smile (stretch).
 8. Mistaken identity is worse than no identity. When unsure, say "someone".
-9. Silence is the default. Cues are 3–6 words. No app utterance may contain the word "Familiar" (it is the wake word).
+9. Speak when it helps, never narrate. Hazards (stairs, escalators, crosswalks, something in the walking path) are said immediately; everything else is 3–6 words and only when it matters; the assistant answers when addressed or clearly useful and otherwise stays silent. The wake word is optional (the assistant listens all session). No app utterance may contain the word "Familiar".
 
 ## Never build
-NFC-tag enrollment that bypasses the other person's own tap-to-consent, a web enrollment page, notifications to known people, voice/speaker identification, space awareness (doors, tables), any server-side storage, SwiftData, Combine-based plumbing, any cloud image call outside the Modal toggle, an ElevenLabs agent session that runs unattended.
+NFC-tag enrollment that bypasses the other person's own tap-to-consent, a web enrollment page, notifications to known people, voice/speaker identification, cloud vision for scene or hazard detection (frames never leave the phone), any server-side storage, SwiftData, Combine-based plumbing, any cloud image call outside the Modal toggle, an ElevenLabs **voice** session (it opens Bluetooth HFP, which ends the glasses camera stream; the agent is text-only), describing strangers in scene output.
 
 ## Repo layout (Xcode synchronized folder groups: adding a file never edits project.pbxproj)
 ```
@@ -24,10 +24,10 @@ Familiar.xcodeproj         Swift 5 mode · SWIFT_DEFAULT_ACTOR_ISOLATION=nonisol
 Familiar/App               FamiliarApp, AppState, Services (DI), Secrets, ReadinessView
 Familiar/Core              Contracts.swift, Models.swift, EventBus.swift, Phrasebook.swift        (S1 writes; S5/S6 may extend)
 Familiar/Sources           PhoneCameraFrameSource, VideoFileFrameSource, GlassesFrameSource (S6)
-Familiar/Perception        FaceDetector, FaceTracker, FaceAligner, OnDeviceEmbedder, ModalEmbedder, Matcher, Spatial, Trajectory, PerceptionPipeline, ScriptedPerception
+Familiar/Perception        FaceDetector, FaceTracker, FaceAligner, OnDeviceEmbedder, ModalEmbedder, Matcher, Spatial, Trajectory, PerceptionPipeline, ScriptedPerception, SceneAwareness (on-device hazards + scene)
 Familiar/Audio             AudioEngineController, EngineAudioInput, RingBuffer, LoudnessSplit (+ GlassesStreamAudioInput S6, LiveKitTapAudioInput S8)
 Familiar/Speech            Transcriber (SpeechAnalyzer; SFSpeech fallback), FakeTranscriber, WakeWord, CommandParser
-Familiar/Voice             Speaker, ElevenLabsTTS, AppleTTS, PhraseCache, Earcon, CuePolicy, CueGate
+Familiar/Voice             Speaker, ElevenLabsTTS, AppleTTS, PhraseCache, Earcon, CuePolicy, CueGate, AgentSession (always-on, text-only)
 Familiar/Memory            JSONPeopleStore, ContactsBridge, MeetingContext
 Familiar/Flows             ConsentFlow, CommandRouter, RollCall
 Familiar/Intelligence      NameExtractor (Regex, FoundationModels, MetaModelAPI), YesNoClassifier, MetaModelClient
@@ -86,7 +86,7 @@ struct TranscriptSegment { let text: String; let start: TimeInterval; let end: T
 protocol Transcriber: AnyObject { func subscribe() -> AsyncStream<TranscriptSegment>; func start(audio: AudioInput) async throws; func stop(); func recentSegments(seconds: TimeInterval) -> [TranscriptSegment] }
 protocol VoiceActivity: AnyObject { func subscribe() -> AsyncStream<(isSpeech: Bool, guess: SpeakerGuess, t: TimeInterval)>; func calibrateUser(seconds: Double) async }
 enum ChatterMode { case quiet, normal, chatty }
-enum Command { case whoIsHere, rememberThem, setMode(ChatterMode), mute, unmute, call(String), text(String), whereIs(String), cancel, repeatLast }
+enum Command { case whoIsHere, rememberThem, setMode(ChatterMode), mute, unmute, call(String), text(String), whereIs(String), cancel, repeatLast, describeSurroundings }
 protocol CommandSource: AnyObject { func subscribe() -> AsyncStream<Command> }
 
 enum Audience { case user, otherPerson }
@@ -114,10 +114,12 @@ Models (`Core/Models.swift`) hold `Codable` conformances, `Equatable` where usef
 bands: ahead · left · right · far left · far right — distances: close · medium · far
 appeared "{Name}, {band}, {distance}." · approaching "{Name}, coming from your {left|right}." / "{Name}, coming toward you." · arrived "{Name}, next to you." · left "{Name} left." · unknown close (chatty only) "Someone close, on your {left|right}." / "Someone close, ahead." · speaking "{Name}."
 roll call: known left→right "{Name}, {band}, {distance}." then "{k} other people." / "One other person." / "No one else."; no known "No one I know. {k} people."; empty "I don't see anyone."
-consent: "Want to remember them?" · "Could you look toward me for a second?" · "{UserName} would like to recognize you next time you meet. Okay to remember your face{, Name}?" · "Sorry, was that a yes?" · "What should I call you?" · "Saved. {Name} is in your contacts." · "Okay, nothing saved." · "They seem to have left. Nothing saved."
+consent: "Should I add this person to your contacts?" (to the wearer) · card "Do you want to be added to {UserName}'s contacts?" · "I'm going to scan your face." · "Could you look toward me for a second?" · "{UserName} would like to recognize you next time you meet. Okay to remember your face{, Name}?" · "Sorry, was that a yes?" · "What should I call you?" · "Saved. {Name} is in your contacts." · "Okay, nothing saved." · "They seem to have left. Nothing saved."
+hazards (priority 0, immediately): "Stairs ahead." "Escalator ahead." "Crosswalk ahead." "Obstacle ahead." · surroundings on request: hazards, then roll call, then "{Place}." "{Object}, {object}." / "Nothing I can name." · place change (chatty only): "{Place}."
 commands: "Quiet mode." "Normal mode." "Chatty mode." "Muted." "Unmuted." "Calling {Name}." "Opening a message to {Name}." "I don't know anyone called {X}." "I don't see {Name}." "Sorry, I didn't get that."
 
 ## External services (text only leaves the phone)
 - ElevenLabs TTS: `POST https://api.elevenlabs.io/v1/text-to-speech/{voice_id}?output_format=pcm_16000`, header `xi-api-key`, body `{"text","model_id":"eleven_flash_v2_5","voice_settings":{"stability":0.5,"similarity_boost":0.75,"speed":1.0},"previous_text":"…"}` → raw 16-bit LE mono 16 kHz PCM. Cache to disk by SHA-256(voice|model|text). Apple `AVSpeechSynthesizer` fallback after 1.2 s without a first byte.
+- ElevenLabs agent (Conversational AI, **text-only** WebSocket): public agent by id, private agent via `GET /v1/convai/conversation/get-signed-url?agent_id=` with `xi-api-key`. Kept open all session, reconnects with backoff. Wearer's final transcript segments go as `[overheard] …` user turns (agent replies `SKIP` unless useful), wake-word phrases as `[to you] …`, other people's speech and the visible-now/around summary as contextual updates. Replies are spoken by our `Speaker` (Route A, glasses A2DP). Nothing is sent and nothing is spoken while a consent flow runs. Setup: docs/AGENT_SETUP.md.
 - Meta Model API: `POST https://api.meta.ai/v1/chat/completions`, `Authorization: Bearer $META_MODEL_API_KEY`, model `muse-spark-1.3` (never the `-contributor` tier), `reasoning_effort` `low`/`minimal`, `response_format` json_schema strict, `max_completion_tokens` 300–500, `prompt_cache_key`. 1–3 s latency: never on the hot path.
 - Modal: `POST $MODAL_EMBED_URL` with headers `Modal-Key`/`Modal-Secret`, body `{"image_b64": "<112×112 JPEG>"}` → `{"embedding":[512 floats],"model":"w600k_mbf"}`; `GET` health endpoint.

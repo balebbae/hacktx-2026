@@ -18,16 +18,15 @@ struct HomeView: View {
             List {
                 Section {
                     statusLine
-                    Picker("Mode", selection: $state.mode) {
+                    // Voice commands also change mode and mute and speak for themselves; only a tap here should speak.
+                    Picker("Mode", selection: Binding(get: { state.mode }, set: { state.mode = $0; coordinator.setMode($0) })) {
                         ForEach(ChatterMode.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.segmented)
                     .accessibilityLabel("Chatter mode")
                     .accessibilityHint("Quiet says less, chatty says more")
-                    .onChange(of: state.mode) { _, new in coordinator.setMode(new) }
-                    Toggle("Mute", isOn: $state.muted)
+                    Toggle("Mute", isOn: Binding(get: { state.muted }, set: { state.muted = $0; coordinator.setMuted($0) }))
                         .accessibilityHint("Stops all cues except urgent ones")
-                        .onChange(of: state.muted) { _, new in coordinator.setMuted(new) }
                 }
                 Section {
                     Button { whoIsHere() } label: { Label("Who's here?", systemImage: "person.2.wave.2") }
@@ -136,6 +135,7 @@ struct HomeView: View {
 
     private var consentQuestion: String {
         if case let .asking(name) = runtime.consentState { return Phrasebook.consentQuestion(userName: state.userName, name: name) }
+        if let q = (runtime.consentFlow as? SpokenConsentFlow)?.lastQuestion { return q }
         return Phrasebook.consentQuestion(userName: state.userName, name: runtime.nameGuess?.name)
     }
 

@@ -14,6 +14,7 @@ final class CommandParserTests: XCTestCase {
             ("text Marcus", .text("Marcus")), ("send a message to marcus", .text("Marcus")), ("message Priya", .text("Priya")),
             ("where is Marcus", .whereIs("Marcus")), ("where's marcus?", .whereIs("Marcus")), ("where did Marcus go", .whereIs("Marcus")),
             ("repeat that", .repeatLast), ("say that again", .repeatLast), ("come again", .repeatLast), ("what did you say", .repeatLast),
+            ("what's around me", .describeSurroundings), ("What is in front of me?", .describeSurroundings), ("describe the room", .describeSurroundings), ("where am I", .describeSurroundings), ("what do you see", .describeSurroundings),
             ("cancel", .cancel), ("never mind", .cancel), ("forget it", .cancel), ("stop", .cancel),
         ]
         for (text, expected) in cases {

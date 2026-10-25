@@ -137,15 +137,9 @@ struct AgentPanel: View {
             HStack {
                 Text(session.status.label).font(.footnote.monospaced())
                 Spacer()
-                if session.status.isLive {
-                    Button("End") { Task { await session.cancel() } }
-                        .font(.footnote)
-                        .accessibilityHint("Ends the assistant session now")
-                } else {
-                    Button("Ask: how many people?") { Task { await session.open(phrase: "how many people are around me") } }
-                        .font(.footnote)
-                        .accessibilityHint("Opens a short assistant session with a scripted question")
-                }
+                Button("Ask: what's around me?") { Task { await session.ask("what's around me") } }
+                    .font(.footnote)
+                    .accessibilityHint("Sends a scripted question to the assistant")
             }
             ForEach(session.transcript.suffix(6)) { line in
                 Text("\(line.role.rawValue): \(line.text)").font(.footnote)

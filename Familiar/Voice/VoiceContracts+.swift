@@ -125,7 +125,7 @@ extension Phrasebook {
         for k in 0...4 { out.append(rollCallOthers(count: k)) }
         for k in 1...4 { out.append(rollCallNoKnown(count: k)) }
         for band in [BearingBand.left, .right, .ahead] { out.append(unknownClose(band: band)) }
-        out += [wantToRemember, lookTowardMe, wasThatAYes, whatShouldICallYou, nothingSaved, theyLeft]
+        out += [shouldIAdd, scanningFace, lookTowardMe, wasThatAYes, whatShouldICallYou, nothingSaved, theyLeft]
         out += ChatterMode.allCases.map(mode)
         out += [muted, unmuted, didNotGetThat]
         return out

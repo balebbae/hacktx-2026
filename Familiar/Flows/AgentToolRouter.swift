@@ -21,18 +21,17 @@ struct AgentToolCall {
     }
 }
 
-/// What goes back to the agent. `endsSession` makes `AgentSession` hang up right after sending the result and then
-/// run `afterEnd` (used by `remember_them`, whose consent flow needs the microphone the agent was holding).
+/// What goes back to the agent.
 struct AgentToolResult {
     let text: String
     var isError = false
-    var endsSession = false
-    var afterEnd: (@MainActor () async -> Void)? = nil
 }
 
 @MainActor
 final class AgentToolRouter {
-    static let toolNames = ["who_is_here", "where_is", "remember_them", "set_mode", "call_person", "text_person", "mute"]
+    static let toolNames = ["who_is_here", "where_is", "describe_surroundings", "remember_them", "set_mode", "call_person", "text_person", "mute"]
+    /// `SceneAwareness.describe(people:)`; set by `FlowRuntime`.
+    var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
 
     private let perception: Perception
     private let peopleStore: PeopleStore
@@ -63,9 +62,15 @@ final class AgentToolRouter {
             guard let name = call.string("name") else { return AgentToolResult(text: Phrasebook.didNotGetThat, isError: true) }
             return AgentToolResult(text: whereIs(name))
 
+        case "describe_surroundings":
+            let tracks = perception.currentTracks()
+            return AgentToolResult(text: surroundings(tracks.isEmpty ? nil : rollCall(tracks)))
+
         case "remember_them":
+            // The consent flow asks the other person itself; agent replies are held until it finishes.
             let flow = consentFlow
-            return AgentToolResult(text: "Starting.", endsSession: true, afterEnd: { await flow.begin(confirmFirst: false) })
+            Task { await flow.begin(confirmFirst: false) }
+            return AgentToolResult(text: "Asking them now.")
 
         case "set_mode":
             guard let m = ChatterMode(agentWord: call.string("mode") ?? "") else {
@@ -110,8 +115,11 @@ final class AgentToolRouter {
         return Phrasebook.unknownPerson(name)
     }
 
-    /// Silent context pushed to the agent every couple of seconds, e.g. "Visible now: Marcus ahead close; 2 other people."
-    func sceneContext() -> String { Self.sceneContext(tracks: perception.currentTracks()) }
+    /// Silent context pushed to the agent when it changes, e.g. "Visible now: Marcus ahead close; 2 other people."
+    func sceneContext() -> String {
+        let around = surroundings(nil)
+        return Self.sceneContext(tracks: perception.currentTracks()) + (around == Phrasebook.nothingToName ? "" : " Around: \(around)")
+    }
 
     static func sceneContext(tracks: [TrackSnapshot]) -> String {
         var names: [String] = []

@@ -10,6 +10,7 @@ final class AlignerSnapshotTests: XCTestCase {
 
     func testFirstFiveEnrollmentCropsHitTemplateEyes() async throws {
         guard let url = appBundle.url(forResource: "enroll_marcus", withExtension: "mp4") else { throw XCTSkip("enroll_marcus.mp4 missing") }
+        try XCTSkipUnless(PerceptionFixtureTests.visionAvailable, PerceptionFixtureTests.visionSkipReason)
         let frames = try await Self.readFrames(url: url, count: 5, stride: 6)
         XCTAssertEqual(frames.count, 5)
         let detector = FaceDetector(), aligner = FaceAligner.shared

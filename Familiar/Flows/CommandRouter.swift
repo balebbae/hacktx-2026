@@ -13,6 +13,8 @@ final class CommandRouter: ObservableObject {
     private let setMode: (ChatterMode) -> Void
     private let setMuted: (Bool) -> Void
     private let rollCall: ([TrackSnapshot]) -> String
+    /// What's around: hazards, then the given people line, then place and objects (`SceneAwareness.describe`).
+    var surroundings: (String?) -> String = { $0 ?? Phrasebook.nothingToName }
     private let clock: () -> TimeInterval
     private var tasks: [Task<Void, Never>] = []
     private var lastGoodbyeFlowAt: TimeInterval = -.infinity
@@ -25,7 +27,7 @@ final class CommandRouter: ObservableObject {
     var conversationCooldown: TimeInterval = 180
     private var lastConversationOfferAt: TimeInterval = -.infinity
 
-    init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCallSkeleton.phrase, clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
+    init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCall.phrase(tracks:), clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
         self.perception = perception; self.speaker = speaker; self.cueGate = cueGate; self.consentFlow = consentFlow
         self.peopleStore = peopleStore; self.contacts = contacts; self.setMode = setMode; self.setMuted = setMuted
         self.rollCall = rollCall; self.clock = clock
@@ -104,6 +106,9 @@ final class CommandRouter: ObservableObject {
         case .cancel:
             consentFlow.cancel()
             speaker.stopAll()
+        case .describeSurroundings:
+            let tracks = perception.currentTracks()
+            await say(surroundings(tracks.isEmpty ? nil : rollCall(tracks)), priority: 1, category: "surroundings")
         case .repeatLast:
             if let u = lastUtterance { await speaker.speak(u) } else { await say(Phrasebook.didNotGetThat, priority: 1, category: "command") }
         }

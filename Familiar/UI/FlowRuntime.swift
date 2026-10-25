@@ -5,17 +5,13 @@ import QuartzCore
 /// Keys for the Settings this session adds. Stored in UserDefaults so S5 can read them when wiring `Services.make`.
 enum UserSettings {
     static let voiceProvider = "voiceProvider"              // "elevenlabs" | "apple"
-    static let embeddingProvider = "embeddingProvider"      // "ondevice" | "modal"
     static let matchThreshold = "matchThreshold"            // 0.25…0.60
-    static let minFacePx = "minFacePx"
     static let audioRoute = "audioRoute"                    // AudioRoute storage
     static let volumePrimary = "volumePrimary"              // "whoIsHere" | "rememberThem"
-    static let cueSpeaking = "cueSpeaking"
-    static let cueWave = "cueWave"
-    static let cueSmile = "cueSmile"
     static let readinessDone = "readinessDone"
     static let autoReplyInSimulator = "autoReplyInSimulator"
     static let selfEnrollUseFixture = "selfEnrollUseFixture"   // S10: enroll_marcus clip instead of the front camera
+    static let userVoiceRMS = "userVoiceRMS"                  // Float from Settings → Calibrate my voice
 }
 
 /// UI-side owner of the S4 modules. Until S5 wires `Services.make`, the coordinator hands us the S1 stand-ins
@@ -91,22 +87,22 @@ final class FlowRuntime: ObservableObject {
         }
         consentFlow = flow
         peopleStore = store
+        let surroundings: (String?) -> String = { [weak scene = s.scene] people in scene?.describe(people: people) ?? (people ?? Phrasebook.nothingToName) }
         let r = FlowFactory.makeCommandRouter(perception: s.perception, speaker: s.speaker, cueGate: s.cueGate, consentFlow: flow, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m })
+        r.surroundings = surroundings
         r.startObserving()
         r.attach(sources: s.commandSources + [manualCommands])
         // "Nice to meet you" / "see you" with a stranger close → "Want to remember them?"
         let goodbye = SpeechFactory.makeGoodbyeDetector(transcriber: s.transcriber)
         r.attachGoodbyes(AsyncStream { cont in goodbye.onGoodbye = { cont.yield($0) } })
         goodbyeDetector = goodbye
-        // Enough talk in a short window → the router checks for a stranger in view and offers to remember them.
+        // A conversation (both sides talking, enough words in a short window) → the router checks for a stranger in
+        // view and asks the wearer "Should I add this person to your contacts?".
         let speech = s.transcriber.subscribe()
         tasks.append(Task { [weak r] in
-            var window: [(t: TimeInterval, words: Int)] = []
+            var window = ConversationWindow()
             for await seg in speech where seg.isFinal {
-                window.append((seg.end, seg.text.split(separator: " ").count))
-                window.removeAll { $0.t < seg.end - FlowRuntime.conversationWindow }
-                guard window.reduce(0, { $0 + $1.words }) >= FlowRuntime.conversationWords else { continue }
-                window.removeAll()
+                guard window.add(seg) else { continue }
                 await r?.conversationDetected(at: seg.end)
             }
         })
@@ -119,40 +115,37 @@ final class FlowRuntime: ObservableObject {
         })
         people = store.all()
 
-        // MARK: S8 — conversational agent: unparsed wake-word phrases open it, "cancel" closes it.
+        // MARK: S8 — always-on agent (text only, so it runs alongside the glasses stream). It hears ongoing speech;
+        // unparsed wake-word phrases are asked directly.
         let toolRouter = AgentToolRouter(perception: s.perception, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, consentFlow: flow, cueGate: s.cueGate, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m }, lastSeen: { [weak r] in r?.lastSeen ?? [:] })
-        let session = AgentSession(router: toolRouter, speaker: s.speaker, cueGate: s.cueGate, audio: s.agentAudio, isStreaming: s.isGlassesStreaming, userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) }, starter: FlowRuntime.agentStarter)
+        toolRouter.surroundings = surroundings
+        let session = AgentSession(router: toolRouter, speaker: s.speaker, cueGate: s.cueGate, userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) }, starter: FlowRuntime.agentStarter)
+        // The spoken flow, or self-enroll (which only raises the gate's flag).
+        session.consentActive = { [weak flow, weak gate = s.cueGate] in ((flow as? SpokenConsentFlow)?.isActive ?? false) || (gate?.consentActive ?? false) }
+        session.recentSpeech = { [weak transcriber = s.transcriber] in transcriber?.recentSegments(seconds: 90) ?? [] }
         agent = session
         for case let wake as WakeWordCommandSource in s.commandSources {
+            session.wakeWordCollecting = { [weak wake] in wake?.wakeWord.isListeningForCommand ?? false }
             tasks.append(Task { [weak self] in
                 for await phrase in wake.subscribeUnparsed() { await self?.openAgent(phrase: phrase) }
             })
         }
-        tasks.append(Task { [weak session] in
-            for await c in manualCommands.subscribe() where c == .cancel { await session?.cancel() }
-        })
-        for src in s.commandSources {
-            tasks.append(Task { [weak session] in
-                for await c in src.subscribe() where c == .cancel { await session?.cancel() }
-            })
-        }
+        session.start(speech: s.transcriber.subscribe())
         // MARK: end S8
     }
 
-    static let conversationWindow: TimeInterval = 45
-    static let conversationWords = 40
 
     func tearDown() {
         tasks.forEach { $0.cancel() }; tasks.removeAll()
         router?.stop(); nameCache?.cache.stop(); clipRecorder?.stop(); goodbyeDetector?.detach()
         router = nil; consentFlow = nil
-        if let a = agent { Task { await a.end(reason: "teardown") } }; agent = nil   // S8
+        if let a = agent { Task { await a.stop() } }; agent = nil   // S8
     }
 
     // S8
     func openAgent(phrase: String) async {
         coordinator?.log("agent ← \(phrase)")
-        await agent?.open(phrase: phrase)
+        await agent?.ask(phrase)
     }
     static var agentStarter: AgentConversationStarter {
         #if targetEnvironment(simulator)

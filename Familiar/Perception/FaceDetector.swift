@@ -24,6 +24,8 @@ final class FaceDetector: @unchecked Sendable {
     private var pool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
     private(set) var lastDurationMillis: Double = 0
+    /// True after Vision failed to run at all (the Simulator: "Could not create inference context").
+    private(set) var visionUnavailable = false
 
     init(config: DetectorConfig = .default) { self.config = config }
 
@@ -54,7 +56,12 @@ final class FaceDetector: @unchecked Sendable {
         let rects = VNDetectFaceRectanglesRequest()
         rects.revision = VNDetectFaceRectanglesRequestRevision3
         let handler = VNImageRequestHandler(cvPixelBuffer: input, orientation: orientation, options: [:])
-        do { try handler.perform([rects]) } catch { return DetectionResult(detections: [], uprightSize: upright, timestamp: timestamp) }
+        do { try handler.perform([rects]) } catch {
+            if !visionUnavailable { NSLog("[FaceDetector] %@", "\(error)") }
+            visionUnavailable = true
+            return DetectionResult(detections: [], uprightSize: upright, timestamp: timestamp)
+        }
+        visionUnavailable = false
         let faces = (rects.results ?? []).filter { $0.confidence >= config.minConfidence && Double($0.boundingBox.height) * Double(upright.height) >= config.minFaceHeightPx }
         guard !faces.isEmpty else { return DetectionResult(detections: [], uprightSize: upright, timestamp: timestamp) }
 

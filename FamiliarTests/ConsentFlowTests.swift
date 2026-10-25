@@ -14,10 +14,11 @@ final class ConsentFlowTests: XCTestCase {
     var recorder: AudioChunkClipRecorder!
     var states: [ConsentState] = []
     var collector: Task<Void, Never>?
+    var backdate: TimeInterval = 0
 
     func makeFlow(name: NameGuess = NameGuess(name: "Marcus", confidence: 0.9, source: "regex"), config: ConsentFlowConfig? = nil) -> SpokenConsentFlow {
         perception = FakePerception(); perception.tracks = [FakePerception.track(7), FakePerception.track(8, faceHeightPx: 120)]
-        transcriber = FakeTranscriber(lines: []); speaker = LogSpeaker(simulateDuration: false); gate = CueGate()
+        transcriber = FakeTranscriber(lines: [], clock: { [unowned self] in CACurrentMediaTime() - self.backdate }); speaker = LogSpeaker(simulateDuration: false); gate = CueGate()
         paths = .temporary(); store = JSONPeopleStore(paths: paths, modelID: "fake"); contacts = RecordingContactsBridge()
         recorder = AudioChunkClipRecorder(seconds: 60)
         let now = CACurrentMediaTime()
@@ -122,15 +123,98 @@ final class ConsentFlowTests: XCTestCase {
         guard case .cancelled? = states.last else { return XCTFail("expected cancelled") }
     }
 
-    func testConfirmFirstWaitsForUserYes() async {
+    func testEchoOfTheQuestionIsNotAnAnswer() async {
         let flow = makeFlow()
+        speaker.simulateDuration = true; speaker.secondsPerWord = 0.05
+        let run = Task { await flow.begin(confirmFirst: false) }
+        await waitFor { [self] in isListening }
+        // The recognizer finalizes the question's own audio a moment after it finished playing; "Okay to…" reads as yes.
+        backdate = 0.6
+        transcriber.emit(.init(speaker: .other, text: "Okay to remember your face, Marcus?"))
+        backdate = 0
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertTrue(store.all().isEmpty, "the question itself must never count as consent")
+        flow.cancel()
+        await run.value
+    }
+
+    // MARK: Suggested: Familiar asks the wearer, the wearer asks the other person
+
+    func testSuggestedWearerAsksOtherSaysYesNameThenScan() async throws {
+        let flow = makeFlow(name: NameGuess(name: nil, confidence: 0, source: "regex"))
         let run = Task { await flow.begin(confirmFirst: true) }
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.wantToRemember) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
         XCTAssertEqual(states.first, .confirmingWithUser)
         transcriber.emit(.init(speaker: .user, text: "yes"))
         await waitFor { [self] in isListening }
-        transcriber.emit(.init(speaker: .other, text: "sure"))
+        XCTAssertFalse(speaker.texts.contains { $0.hasPrefix("Priya would like") }, "the wearer asks, not the app")
+        XCTAssertEqual(flow.lastQuestion, Phrasebook.wearerAsksCard(userName: "Priya"))
+        XCTAssertTrue(gate.consentActive)
+        // The wearer's own question, misattributed to the other side, is neither a yes nor a reason to re-ask.
+        transcriber.emit(.init(speaker: .none, text: "Hey, do you want to be added to my contacts? It's okay if not."))
+        transcriber.emit(.init(speaker: .other, text: "Hmm"))
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(store.all().isEmpty)
+        XCTAssertFalse(speaker.texts.contains(Phrasebook.wasThatAYes))
+        transcriber.emit(.init(speaker: .other, text: "Yes, sure."))
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.whatShouldICallYou) }
+        transcriber.emit(.init(speaker: .other, text: "Dana"))
         await run.value
-        guard case .done? = states.last else { return XCTFail("expected done, got \(String(describing: states.last))") }
+        guard case let .done(p)? = states.last else { return XCTFail("expected done, got \(String(describing: states.last))") }
+        XCTAssertEqual(p.name, "Dana")
+        XCTAssertEqual(p.consent.kind, .spoken); XCTAssertEqual(p.consent.replyTranscript, "Yes, sure.")
+        XCTAssertTrue(p.consent.askedText.hasPrefix("Asked by Priya:"), p.consent.askedText)
+        let t = speaker.texts
+        let ask = try XCTUnwrap(t.firstIndex(of: Phrasebook.whatShouldICallYou)), scan = try XCTUnwrap(t.firstIndex(of: Phrasebook.scanningFace)), saved = try XCTUnwrap(t.firstIndex(of: Phrasebook.saved(name: "Dana")))
+        XCTAssertLessThan(ask, scan); XCTAssertLessThan(scan, saved)
+        XCTAssertEqual(contacts.created.map(\.name), ["Dana"])
+        XCTAssertFalse(gate.consentActive)
+    }
+
+    func testSuggestedKnownNameSkipsTheNameQuestion() async {
+        let flow = makeFlow()
+        let run = Task { await flow.begin(confirmFirst: true) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
+        transcriber.emit(.init(speaker: .user, text: "yeah"))
+        await waitFor { [self] in isListening }
+        flow.tapAnswer(yes: true)
+        await run.value
+        guard case let .done(p)? = states.last else { return XCTFail("expected done") }
+        XCTAssertEqual(p.name, "Marcus"); XCTAssertEqual(p.consent.kind, .tap)
+        XCTAssertFalse(speaker.texts.contains(Phrasebook.whatShouldICallYou))
+        XCTAssertTrue(speaker.texts.contains(Phrasebook.scanningFace))
+    }
+
+    func testSuggestedOtherSaysNoSavesNothing() async {
+        let flow = makeFlow()
+        let run = Task { await flow.begin(confirmFirst: true) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
+        transcriber.emit(.init(speaker: .user, text: "yes"))
+        await waitFor { [self] in isListening }
+        transcriber.emit(.init(speaker: .other, text: "No thanks."))
+        await run.value
+        XCTAssertEqual(states.last, .declined)
+        XCTAssertTrue(store.all().isEmpty); XCTAssertTrue(contacts.created.isEmpty)
+        XCTAssertFalse(speaker.texts.contains(Phrasebook.scanningFace))
+        XCTAssertEqual(speaker.texts.last, Phrasebook.nothingSaved)
+    }
+
+    func testSuggestedWearerSaysNoEndsQuietly() async {
+        let flow = makeFlow()
+        let run = Task { await flow.begin(confirmFirst: true) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
+        transcriber.emit(.init(speaker: .user, text: "no"))
+        await run.value
+        XCTAssertEqual(states.last, .idle)
+        XCTAssertEqual(speaker.texts, [Phrasebook.shouldIAdd])
+        XCTAssertTrue(store.all().isEmpty); XCTAssertFalse(gate.consentActive)
+    }
+
+    func testQuestionShapes() {
+        XCTAssertTrue(SpokenConsentFlow.looksLikeQuestion("Do you want to be added to my contacts?"))
+        XCTAssertTrue(SpokenConsentFlow.looksLikeQuestion("hey so would you mind if it remembers you"))
+        XCTAssertTrue(SpokenConsentFlow.looksLikeQuestion("Is it okay if I add you"))
+        XCTAssertFalse(SpokenConsentFlow.looksLikeQuestion("Yes, I want to be added"))
+        XCTAssertFalse(SpokenConsentFlow.looksLikeQuestion("Sure, go ahead"))
     }
 }
