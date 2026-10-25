@@ -17,7 +17,9 @@ protocol EndpointSource: AnyObject { func subscribeEndpoints() -> AsyncStream<Ti
 enum SpeechSignal: Equatable { case goodbyeDetected(t: TimeInterval) }
 
 /// What the wake word collected after "Poyo", parsed or not (nil command → router says "Sorry, I didn't get that.").
-struct WakeWordHit: Equatable { let text: String; let command: Command?; let t: TimeInterval }
+/// `isCorrection`: the full request for one that already went out from in-progress text; it supersedes that one
+/// and plays no second chime.
+struct WakeWordHit: Equatable { let text: String; let command: Command?; let t: TimeInterval; var isCorrection = false }
 
 enum TranscriberError: Error, Equatable { case unavailable(String), notAuthorized }
 

@@ -23,7 +23,7 @@ enum CommandParser {
         var n = raw.replacingOccurrences(of: "\\b(please|now|for me)\\b", with: "", options: .regularExpression)
         n = n.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
         // Pronouns are not names: "where did he go" is a question for Poyo, who knows who "he" is from the dialogue.
-        guard !n.isEmpty, n.count <= 40, !["them", "him", "her", "me", "it", "someone", "somebody", "he", "she", "they", "that", "this"].contains(n) else { return nil }
+        guard !n.isEmpty, n.count <= 40, !["them", "him", "her", "me", "it", "someone", "somebody", "he", "she", "they", "that", "this", "my", "your", "our", "the", "a"].contains(n) else { return nil }
         return n.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
 

@@ -22,7 +22,11 @@ final class DialogueMemory: @unchecked Sendable {
         let line = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !line.isEmpty else { return }
         lock.withLock { turns in
-            if let last = turns.last, last.role == role, last.text == line, t - last.t <= dedupeWindow { return }
+            if let last = turns.last, last.role == role, t - last.t <= dedupeWindow {
+                if last.text == line { return }
+                // A request that went out early and then completed ("can you" → "can you update his name"): one turn.
+                if line.lowercased().hasPrefix(last.text.lowercased()) { turns[turns.count - 1] = Turn(role: role, text: line, t: t); return }
+            }
             turns.append(Turn(role: role, text: line, t: t))
             turns.removeAll { t - $0.t > maxAge }
             if turns.count > maxTurns { turns.removeFirst(turns.count - maxTurns) }

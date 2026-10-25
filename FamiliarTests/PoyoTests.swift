@@ -259,6 +259,15 @@ final class DialogueMemoryTests: XCTestCase {
         m.record(.poyo, "Marcus left.", at: 30)
         XCTAssertEqual(m.turns(now: 31).last?.text, "Marcus left.", "the same line long after is a new turn")
     }
+
+    func testARequestThatWentOutEarlyAndThenCompletedIsOneTurn() {
+        let m = DialogueMemory()
+        m.record(.wearer, "can you", at: 10)
+        m.record(.wearer, "Can you update his name", at: 13)
+        XCTAssertEqual(m.turns(now: 14).map(\.text), ["Can you update his name"])
+        m.record(.wearer, "can you", at: 40)
+        XCTAssertEqual(m.turns(now: 41).count, 2, "a new request later is a new turn")
+    }
 }
 
 @MainActor

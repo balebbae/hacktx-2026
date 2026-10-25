@@ -115,6 +115,24 @@ final class SpeakerQueueTests: XCTestCase {
         XCTAssertGreaterThan(Earcon.samples.max() ?? 0, 0.3)
     }
 
+    func testRoutineCuesWaitForAPauseInSpeechButNotForever() async {
+        let clock = ManualClock(100)
+        var waits: [TimeInterval] = []
+        let (speaker, _, _) = makeSpeaker(clock: clock, sleep: { s in waits.append(s); clock.now += s })
+        var polls = 0
+        speaker.speechInProgress = { polls += 1; return polls <= 3 }       // someone talks through the first three polls
+        let urgent = await speaker.speak(.test("Wall ahead, close.", priority: 0))
+        XCTAssertEqual(urgent?.lowerBound, 100, "safety never waits for a pause")
+        XCTAssertEqual(polls, 0); XCTAssertEqual(waits, [])
+        let cue = await speaker.speak(.test("Marcus, 12 o'clock, close.", priority: 1))
+        XCTAssertNotNil(cue)
+        XCTAssertEqual(waits.filter { $0 == 0.1 }.count, 3, "held in 100 ms steps until the pause (the other wait is the spacing)")
+        speaker.speechInProgress = { true }
+        let before = waits.count
+        _ = await speaker.speak(.test("Priya, 1 o'clock, far.", priority: 1))
+        XCTAssertEqual(waits[before...].filter { $0 == 0.1 }.count, Int(speaker.maxHoldForSpeech / 0.1), "a room that never pauses: the cue goes out after 2.5 s anyway")
+    }
+
     func testNoLeadInOffBluetooth() async {
         let (speaker, _, playback) = makeSpeaker()
         speaker.isBluetoothOutput = { false }

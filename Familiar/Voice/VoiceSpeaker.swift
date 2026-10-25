@@ -24,6 +24,11 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
     /// Whether the current output route is Bluetooth; nil (tests) keeps the lead-in.
     var isBluetoothOutput: (() -> Bool)?
     var streaming = true
+    /// Someone is speaking right now (the recognizer has in-progress text). Routine lines (priority ≥ 1) wait for
+    /// the pause, at most `maxHoldForSpeech`, so a cue does not start on top of the wearer's "Poyo, …" and mute
+    /// the mic under it. nil (tests) never holds.
+    var speechInProgress: (() -> Bool)?
+    var maxHoldForSpeech: TimeInterval = 2.5
     /// Fires for every utterance that reached playback (the judge view's utterance log).
     var onSpoken: ((Spoken) -> Void)?
     var onDropped: ((Utterance, String) -> Void)?
@@ -124,6 +129,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
             let wait = lastEnd + minimumSpacing - clock()
             if wait > 0 { await sleep(wait) }
             if !isCurrent(job) { return nil }    // interrupted while waiting
+        }
+        if u.priority >= 1, let busy = speechInProgress {
+            // Bounded by count as well as time, so a stopped test clock cannot spin here.
+            for _ in 0..<Int(maxHoldForSpeech / 0.1) where busy() {
+                await sleep(0.1)
+                if !isCurrent(job) { return nil }
+            }
         }
         let gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
         func prefix(for sampleRate: Double) -> [Float] {

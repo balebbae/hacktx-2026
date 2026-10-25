@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import QuartzCore
+import os
 
 /// Owns the live `Services`, runs the perception → cue policy → gate → speaker loop, and keeps the judge-view feeds
 /// (latest snapshot, utterance log, event log, transcript). S5 extends this with audio lifecycle and the command router.
@@ -88,6 +89,13 @@ final class AppCoordinator: ObservableObject {
         // Every line that reaches the wearer's ear is a turn Poyo took, whichever lane wrote it: the model and
         // "say that again" read them back from `dialogue`.
         if let voice = s.speaker as? VoiceSpeaker {
+            // The mic is muted while the app speaks, so a cue that starts over the wearer's "Poyo, …" eats the wake
+            // word: routine cues wait (briefly) while the recognizer shows someone mid-sentence.
+            if let volatile = (s.transcriber as? VolatileTextSource)?.subscribeVolatile() {
+                let lastVolatileAt = OSAllocatedUnfairLock<TimeInterval>(initialState: -Double.infinity)
+                tasks.append(Task.detached { for await _ in volatile { lastVolatileAt.withLock { $0 = CACurrentMediaTime() } } })
+                voice.speechInProgress = { CACurrentMediaTime() - lastVolatileAt.withLock { $0 } < 0.7 }
+            }
             voice.onSpoken = { spoken in
                 DiagnosticLog.write("said[p\(spoken.utterance.priority) \(spoken.utterance.category)\(spoken.source == "apple" ? " apple" : "")] \(spoken.utterance.text)")
                 if spoken.utterance.audience == .user { s.dialogue.record(.poyo, spoken.utterance.text, at: spoken.window?.lowerBound ?? CACurrentMediaTime()) }

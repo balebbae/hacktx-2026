@@ -150,8 +150,8 @@ final class FlowRuntime: ObservableObject {
             // "Heard you": a chime the moment a request is complete, cutting off whatever was playing.
             tasks.append(Task { [weak speaker = s.speaker] in
                 for await hit in wake.subscribeHits() {
-                    DiagnosticLog.write("wake hit: \(hit.text) → \(hit.command.map { "\($0)" } ?? "Poyo")")
-                    await speaker?.speak(.heardYou)
+                    DiagnosticLog.write("wake hit\(hit.isCorrection ? " (correction)" : ""): \(hit.text) → \(hit.command.map { "\($0)" } ?? "Poyo")")
+                    if !hit.isCorrection { await speaker?.speak(.heardYou) }
                 }
             })
         }
