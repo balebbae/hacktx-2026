@@ -36,7 +36,7 @@ The `sahas` branch carries the full SwiftUI redesign (docs/DESIGN_SPEC.md, docs/
 - **What was not possible on the design machines.** The branch was written on Macs without an iOS SDK: every file passes `xcrun swiftc -parse` (Swift 5 and 6 modes) and the kit signatures were checked against the pinned libraries.dev sources, but the first real `xcodebuild` happens on your Mac. If something fails to type-check, the usual suspects are listed in docs/HANDOFF.md under "Design branch (sahas)".
 
 ### Secrets
-`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`. URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
+`Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`, `SERPAPI_KEY` (quick facts: "Poyo, look up the Longhorns game"; off when empty). URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
 
 ### Fixtures
 `Familiar/Resources/Fixtures/`: `*.mp4` clips (720×1280), `fixtures.json` with per-clip expectations, `*.txt` transcripts for `FakeTranscriber`, `script.json` for `ScriptedPerception`. Missing clips make the related tests skip, never fail.
