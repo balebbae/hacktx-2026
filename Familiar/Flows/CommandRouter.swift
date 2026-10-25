@@ -149,7 +149,7 @@ final class CommandRouter: ObservableObject {
     func conversationDetected(at t: TimeInterval) async {
         guard !consentActive, t - lastConversationOfferAt >= conversationCooldown, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
         let strangerNear = perception.currentTracks().contains { !$0.identity.isKnown && $0.distance != .far }
-        guard strangerNear else { return }
+        guard strangerNear else { DiagnosticLog.write("conversation: no unknown face nearby, not offering"); return }
         lastConversationOfferAt = t
         lastGoodbyeFlowAt = t
         Task { await consentFlow.begin(confirmFirst: true) }

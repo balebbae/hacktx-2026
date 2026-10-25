@@ -24,7 +24,7 @@ final class ConsentFlowTests: XCTestCase {
         let now = CACurrentMediaTime()
         recorder.append(AudioChunk(samples: Array(repeating: 0.1, count: 16_000 * 20), sampleRate: 16_000, timestamp: now - 10))
         var cfg = config ?? ConsentFlowConfig()
-        if config == nil { cfg.listenTimeout = 1.5; cfg.reaskTimeout = 1; cfg.nameTimeout = 0.5; cfg.gatherTimeout = 0.5; cfg.extraGatherTimeout = 0.5; cfg.confirmTimeout = 1 }
+        if config == nil { cfg.listenTimeout = 1.5; cfg.reaskTimeout = 1; cfg.nameTimeout = 0.5; cfg.gatherTimeout = 0.5; cfg.extraGatherTimeout = 0.5; cfg.confirmTimeout = 1; cfg.numberTimeout = 1; cfg.numberSettle = 0.2; cfg.numberPause = 0.3 }
         let flow = SpokenConsentFlow(perception: perception, transcriber: transcriber, speaker: speaker, cueGate: gate, peopleStore: store, contacts: contacts, nameExtractor: FixedName(guess: name), yesNo: RulesYesNoClassifier(), clipRecorder: recorder, meeting: StaticMeetingContext(placeName: "HackTX"), paths: paths, userName: { "Priya" }, nameGuess: nil, config: cfg)
         states = []
         let stream = flow.subscribe()
@@ -138,16 +138,14 @@ final class ConsentFlowTests: XCTestCase {
         await run.value
     }
 
-    // MARK: Suggested: Familiar asks the wearer, the wearer asks the other person
+    // MARK: Suggested: Poyo coaches the wearer, the wearer asks, only the other person's yes saves
 
-    func testSuggestedWearerAsksOtherSaysYesNameThenScan() async throws {
+    func testSuggestedCoachesWearerThenScanNameAndNumber() async throws {
         let flow = makeFlow(name: NameGuess(name: nil, confidence: 0, source: "regex"))
         let run = Task { await flow.begin(confirmFirst: true) }
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
-        XCTAssertEqual(states.first, .confirmingWithUser)
-        transcriber.emit(.init(speaker: .user, text: "yes"))
         await waitFor { [self] in isListening }
-        XCTAssertFalse(speaker.texts.contains { $0.hasPrefix("Priya would like") }, "the wearer asks, not the app")
+        XCTAssertEqual(speaker.texts.first, Phrasebook.coachAskConsent)
+        XCTAssertEqual(speaker.entries.first?.utterance.audience, .user, "coaching is only in the glasses")
         XCTAssertEqual(flow.lastQuestion, Phrasebook.wearerAsksCard(userName: "Priya"))
         XCTAssertTrue(gate.consentActive)
         // The wearer's own question, misattributed to the other side, is neither a yes nor a reason to re-ask.
@@ -157,57 +155,65 @@ final class ConsentFlowTests: XCTestCase {
         XCTAssertTrue(store.all().isEmpty)
         XCTAssertFalse(speaker.texts.contains(Phrasebook.wasThatAYes))
         transcriber.emit(.init(speaker: .other, text: "Yes, sure."))
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.whatShouldICallYou) }
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.coachAskName) }
         transcriber.emit(.init(speaker: .other, text: "Dana"))
+        await waitFor { [self] in speaker.texts.contains(Phrasebook.coachAskNumber(name: "Dana")) }
+        transcriber.emit(.init(speaker: .other, text: "Sure, it's five one two, 555"))
+        transcriber.emit(.init(speaker: .other, text: "oh one oh oh"))
         await run.value
         guard case let .done(p)? = states.last else { return XCTFail("expected done, got \(String(describing: states.last))") }
         XCTAssertEqual(p.name, "Dana")
+        XCTAssertEqual(p.phone, "(512) 555-0100")
+        XCTAssertEqual(contacts.created.first?.phone, "(512) 555-0100")
         XCTAssertEqual(p.consent.kind, .spoken); XCTAssertEqual(p.consent.replyTranscript, "Yes, sure.")
         XCTAssertTrue(p.consent.askedText.hasPrefix("Asked by Priya:"), p.consent.askedText)
-        let t = speaker.texts
-        let ask = try XCTUnwrap(t.firstIndex(of: Phrasebook.whatShouldICallYou)), scan = try XCTUnwrap(t.firstIndex(of: Phrasebook.scanningFace)), saved = try XCTUnwrap(t.firstIndex(of: Phrasebook.saved(name: "Dana")))
-        XCTAssertLessThan(ask, scan); XCTAssertLessThan(scan, saved)
-        XCTAssertEqual(contacts.created.map(\.name), ["Dana"])
+        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachAskName, Phrasebook.coachAskNumber(name: "Dana"),
+                                       "Got 5 1 2, 5 5 5, 0 1 0 0.", Phrasebook.saved(name: "Dana")])
+        XCTAssertTrue(speaker.entries.allSatisfy { $0.utterance.audience == .user }, "nothing is said to the other person by the app")
         XCTAssertFalse(gate.consentActive)
     }
 
-    func testSuggestedKnownNameSkipsTheNameQuestion() async {
+    func testSuggestedKnownNameTapYesNoNumber() async {
         let flow = makeFlow()
         let run = Task { await flow.begin(confirmFirst: true) }
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
-        transcriber.emit(.init(speaker: .user, text: "yeah"))
         await waitFor { [self] in isListening }
         flow.tapAnswer(yes: true)
         await run.value
         guard case let .done(p)? = states.last else { return XCTFail("expected done") }
-        XCTAssertEqual(p.name, "Marcus"); XCTAssertEqual(p.consent.kind, .tap)
-        XCTAssertFalse(speaker.texts.contains(Phrasebook.whatShouldICallYou))
-        XCTAssertTrue(speaker.texts.contains(Phrasebook.scanningFace))
+        XCTAssertEqual(p.name, "Marcus"); XCTAssertEqual(p.consent.kind, .tap); XCTAssertNil(p.phone)
+        XCTAssertFalse(speaker.texts.contains(Phrasebook.coachAskName))
+        XCTAssertEqual(speaker.texts, [Phrasebook.coachAskConsent, Phrasebook.coachAskNumber(name: "Marcus"), Phrasebook.noNumber, Phrasebook.saved(name: "Marcus")])
     }
 
     func testSuggestedOtherSaysNoSavesNothing() async {
         let flow = makeFlow()
         let run = Task { await flow.begin(confirmFirst: true) }
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
-        transcriber.emit(.init(speaker: .user, text: "yes"))
         await waitFor { [self] in isListening }
         transcriber.emit(.init(speaker: .other, text: "No thanks."))
         await run.value
         XCTAssertEqual(states.last, .declined)
         XCTAssertTrue(store.all().isEmpty); XCTAssertTrue(contacts.created.isEmpty)
-        XCTAssertFalse(speaker.texts.contains(Phrasebook.scanningFace))
+        XCTAssertFalse(speaker.texts.contains { $0.hasPrefix("Now ask") })
         XCTAssertEqual(speaker.texts.last, Phrasebook.nothingSaved)
     }
 
-    func testSuggestedWearerSaysNoEndsQuietly() async {
+    func testSuggestedWithoutAnUnknownFaceDoesNothing() async {
         let flow = makeFlow()
-        let run = Task { await flow.begin(confirmFirst: true) }
-        await waitFor { [self] in speaker.texts.contains(Phrasebook.shouldIAdd) }
-        transcriber.emit(.init(speaker: .user, text: "no"))
-        await run.value
+        perception.tracks = []
+        await flow.begin(confirmFirst: true)
         XCTAssertEqual(states.last, .idle)
-        XCTAssertEqual(speaker.texts, [Phrasebook.shouldIAdd])
-        XCTAssertTrue(store.all().isEmpty); XCTAssertFalse(gate.consentActive)
+        XCTAssertEqual(speaker.texts, [])
+        XCTAssertFalse(gate.consentActive)
+    }
+
+    func testPhoneNumbersFromSpeech() {
+        XCTAssertEqual(PhoneNumber.digits(in: "It's 512-555-0100."), "5125550100")
+        XCTAssertEqual(PhoneNumber.digits(in: "five one two five five five oh one oh oh"), "5125550100")
+        XCTAssertEqual(PhoneNumber.digits(in: "oh sure, it's (512) 555 0100"), "5125550100", "a leading 'oh' is not a zero")
+        XCTAssertEqual(PhoneNumber.format("5125550100"), "(512) 555-0100")
+        XCTAssertEqual(PhoneNumber.format("15125550100"), "+1 (512) 555-0100")
+        XCTAssertEqual(PhoneNumber.format("4412345678901"), "4412345678901")
+        XCTAssertEqual(Phrasebook.gotNumber("5125550100"), "Got 5 1 2, 5 5 5, 0 1 0 0.")
     }
 
     func testQuestionShapes() {

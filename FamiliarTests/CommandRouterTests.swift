@@ -94,6 +94,13 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, 12 o'clock, close. No one else. Kitchen.")
     }
 
+    func testConversationWindowOnThePhoneCountsWordsFromAnyone() {
+        var w = ConversationWindow(); w.words = 10; w.requireBothSides = false
+        let seg = { (t: TimeInterval, n: Int) in TranscriptSegment(text: Array(repeating: "word", count: n).joined(separator: " "), start: t - 1, end: t, isFinal: true, speaker: .user) }
+        XCTAssertFalse(w.add(seg(1, 6)))
+        XCTAssertTrue(w.add(seg(2, 6)), "the loudness split cannot be trusted; a nearby unknown face is checked by the router")
+    }
+
     func testConversationWindowNeedsBothSides() {
         var w = ConversationWindow(); w.words = 10
         func seg(_ t: TimeInterval, _ s: SpeakerGuess, _ words: Int) -> TranscriptSegment {

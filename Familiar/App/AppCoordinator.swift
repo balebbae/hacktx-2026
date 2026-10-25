@@ -85,7 +85,10 @@ final class AppCoordinator: ObservableObject {
             })
         }
         tasks.append(Task { [weak self] in
-            for await seg in s.transcriber.subscribe() { await MainActor.run { self?.transcript = Array((self?.transcript ?? []).suffix(39)) + [seg] } }
+            for await seg in s.transcriber.subscribe() {
+                if seg.isFinal { DiagnosticLog.heard(seg) }
+                await MainActor.run { self?.transcript = Array((self?.transcript ?? []).suffix(39)) + [seg] }
+            }
         })
         tasks.append(Task { [weak self] in
             for await st in s.consentFlow.subscribe() { await MainActor.run { self?.consentState = st; self?.log("consent → \(st)") } }
@@ -214,6 +217,7 @@ final class AppCoordinator: ObservableObject {
     }
 
     func log(_ text: String) {
+        DiagnosticLog.write(text)
         events = Array(events.suffix(199)) + [LoggedEvent(at: CACurrentMediaTime(), text: text)]
     }
 

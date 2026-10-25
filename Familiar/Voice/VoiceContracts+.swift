@@ -90,7 +90,9 @@ enum VoiceFactory {
         guard let apiKey, !apiKey.isEmpty else { return apple }
         let cache = cacheDirectory.map(PhraseCache.init(directory:)) ?? PhraseCache()
         let eleven = ElevenLabsTTS(apiKey: apiKey, voiceID: voiceID ?? defaultVoiceID, cache: cache, session: session)
-        return FallbackSynthesizer(primary: eleven, fallback: apple)
+        let synth = FallbackSynthesizer(primary: eleven, fallback: apple)
+        synth.onFallback = { text, error in DiagnosticLog.write("TTS fell back to the Apple voice (\(error)): \(text)") }
+        return synth
     }
 
     /// The production speaker: priority queue over the given synthesizer and playback.

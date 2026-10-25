@@ -7,7 +7,9 @@ import os
 /// leave the phone; actions run through `CommandRouter`, so consent still belongs to the other person.
 @MainActor
 final class PoyoBrain: ObservableObject {
-    @Published private(set) var lines: [AgentLine] = []
+    @Published private(set) var lines: [AgentLine] = [] {
+        didSet { if let l = lines.last, lines.count > oldValue.count { DiagnosticLog.write("poyo \(l.role.rawValue): \(l.text)") } }
+    }
     /// Seconds from the request reaching the brain to its answer starting to play.
     @Published private(set) var lastLatency: TimeInterval?
     @Published private(set) var busy = false

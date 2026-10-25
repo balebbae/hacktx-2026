@@ -103,8 +103,10 @@ final class FlowRuntime: ObservableObject {
         let speech = s.transcriber.subscribe()
         tasks.append(Task { [weak r] in
             var window = ConversationWindow()
+            window.seconds = 40; window.words = 25; window.requireBothSides = false
             for await seg in speech where seg.isFinal {
                 guard window.add(seg) else { continue }
+                DiagnosticLog.write("conversation detected")
                 await r?.conversationDetected(at: seg.end)
             }
         })
@@ -130,7 +132,10 @@ final class FlowRuntime: ObservableObject {
         if let wake {
             // "Heard you": a chime the moment a request is complete, cutting off whatever was playing.
             tasks.append(Task { [weak speaker = s.speaker] in
-                for await _ in wake.subscribeHits() { await speaker?.speak(.heardYou) }
+                for await hit in wake.subscribeHits() {
+                    DiagnosticLog.write("wake hit: \(hit.text) → \(hit.command.map { "\($0)" } ?? "Poyo")")
+                    await speaker?.speak(.heardYou)
+                }
             })
         }
         if UserDefaults.standard.string(forKey: UserSettings.assistantBrain) != "elevenlabs", s.cloudScene.isConfigured {
