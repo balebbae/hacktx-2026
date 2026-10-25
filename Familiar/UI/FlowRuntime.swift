@@ -15,6 +15,7 @@ enum UserSettings {
     static let cueSmile = "cueSmile"
     static let readinessDone = "readinessDone"
     static let autoReplyInSimulator = "autoReplyInSimulator"
+    static let selfEnrollUseFixture = "selfEnrollUseFixture"   // S10: enroll_marcus clip instead of the front camera
 }
 
 /// UI-side owner of the S4 modules. Until S5 wires `Services.make`, the coordinator hands us the S1 stand-ins
@@ -38,6 +39,7 @@ final class FlowRuntime: ObservableObject {
     private(set) var metaClient: MetaModelClient?
     private(set) var clipRecorder: AudioChunkClipRecorder?
     private(set) var meeting: MeetingContextProvider?
+    private(set) var contacts: ContactsBridge?
     private(set) var services: Services?
     let manualCommands = ManualCommandSource()
     private var tasks: [Task<Void, Never>] = []
@@ -55,8 +57,11 @@ final class FlowRuntime: ObservableObject {
         if s.consentFlow is StubConsentFlow {
             isBridged = true
             let contacts: ContactsBridge = s.contacts is NoopContactsBridge ? CNContactsBridge(thumbnailData: { [weak self] p in self?.jsonStore?.thumbnailURL(for: p).flatMap { try? Data(contentsOf: $0) } }) : s.contacts
-            let json = JSONPeopleStore(paths: .documents, modelID: "fake", contacts: contacts)
+            // The gallery only serves embeddings whose modelID matches, so the store must follow the live embedder
+            // (w600k_mbf on the real pipeline, "fake" for ScriptedPerception).
+            let json = JSONPeopleStore(paths: .documents, modelID: (s.perception as? PerceptionPipeline)?.embedder.modelID ?? "fake", contacts: contacts)
             jsonStore = json
+            self.contacts = contacts
             store = json
             let intel = IntelligenceFactory.make()
             metaClient = intel.metaClient
@@ -79,6 +84,7 @@ final class FlowRuntime: ObservableObject {
             flow = s.consentFlow
             store = s.peopleStore
             jsonStore = s.peopleStore as? JSONPeopleStore
+            self.contacts = s.contacts
         }
         consentFlow = flow
         peopleStore = store

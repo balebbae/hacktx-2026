@@ -51,6 +51,15 @@ enum Phrasebook {
     static let nothingSaved = "Okay, nothing saved."
     static let theyLeft = "They seem to have left. Nothing saved."
 
+    // MARK: Self-enroll (S10: the other person holds the phone and taps YES themselves)
+    static let someoneIntroducing = "Someone is introducing themselves."
+    static func selfEnrollIntro(userName: String) -> String { "\(userName) uses this app to recognize people who agree. Want them to remember you?" }
+    static func selfEnrollConsent(name: String) -> String { "Okay to remember your face, \(name)? Only this phone keeps it. You can be removed any time." }
+    static func selfEnrollHandBack(name: String) -> String { "Saved. \(name), hand the phone back." }
+    static let lookAtCamera = "Look at the camera…"
+    static func scanProgress(_ have: Int, of total: Int) -> String { "\(lookAtCamera) \(have)/\(total)" }
+    static let noFaceYet = "No face yet. Hold the phone at arm's length."
+
     // MARK: Commands
     static func mode(_ m: ChatterMode) -> String {
         switch m { case .quiet: return "Quiet mode."; case .normal: return "Normal mode."; case .chatty: return "Chatty mode." }
