@@ -4,43 +4,155 @@ import Speech
 import Contacts
 import CoreLocation
 
-/// First-launch checklist: permissions, model file, keys and audio route. Also shown by RootView while the coordinator boots.
+/// First-launch checklist: permissions, model file, keys and audio route. Shown by RootView while the coordinator
+/// boots, as a sheet from the tab bar until it has been completed once, and from the Privacy page of onboarding.
 struct ReadinessView: View {
     var onDone: (() -> Void)? = nil
     @StateObject private var model = ReadinessModel()
+    @Environment(\.visionScale) private var scale
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    private var readyCount: Int { model.items.filter { $0.status == .ok }.count }
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text("Nothing here records anything yet. Each row asks for one permission; you can skip any of them.")
-                        .font(.footnote).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    summary
+                    checklist
+                    OnboardingTrustLine(text: "Nothing here records anything yet.")
                 }
-                Section("Permissions") {
-                    ForEach(model.items) { item in
-                        HStack {
-                            Image(systemName: item.status.symbol).foregroundStyle(item.status.color).accessibilityHidden(true)
-                            VStack(alignment: .leading) { Text(item.title); Text(item.detail).font(.footnote).foregroundStyle(.secondary) }
-                            Spacer()
-                            Text(item.status.word).font(.footnote).foregroundStyle(.secondary)
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel("\(item.title): \(item.status.word). \(item.detail)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, FamiliarPalette.margin)
+                .padding(.top, 28)
+                .padding(.bottom, 24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            OnboardingActionBar {
+                Button { Task { await model.runAll() } } label: {
+                    if model.running {
+                        ShimmerText("Checking…", font: FamiliarType.control(scale), color: FamiliarPalette.canvas(scale), highlight: FamiliarPalette.lilac)
+                    } else {
+                        Label("Check everything", systemImage: "checklist")
                     }
                 }
-                Section {
-                    Button { Task { await model.runAll() } } label: { Label(model.running ? "Checking…" : "Check everything", systemImage: "checklist") }
-                        .disabled(model.running)
-                        .accessibilityHint("Requests each permission in turn and checks the model and keys")
-                    if let onDone {
-                        Button("Continue", action: onDone).font(.headline)
-                            .accessibilityHint("Goes to the home screen")
-                    }
+                .buttonStyle(PrimaryPillStyle())
+                .disabled(model.running)
+                .accessibilityLabel(model.running ? "Checking" : "Check everything")
+                .accessibilityHint("Requests each permission in turn and checks the model and keys")
+                if let onDone {
+                    Button("Continue", action: onDone)
+                        .buttonStyle(GhostPillStyle())
+                        .accessibilityHint("Closes this checklist")
                 }
             }
-            .navigationTitle("Ready?")
-            .task { await model.check() }
         }
+        .familiarCanvas()
+        .task { await model.check() }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Eyebrow(text: "Setup")
+            Text("Before we begin")
+                .font(FamiliarType.titleXL(scale))
+                .foregroundStyle(FamiliarPalette.ink(scale))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text("Each row asks for one permission. You can skip any of them.")
+                .font(FamiliarType.body(scale))
+                .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "5 of 8 ready", with the digits popping in as checks complete.
+    private var summary: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            NumberPop(value: readyCount, font: FamiliarType.display(scale), color: FamiliarPalette.ink(scale))
+            Text("of \(model.items.count) ready")
+                .font(FamiliarType.title(scale))
+                .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(readyCount) of \(model.items.count) ready")
+    }
+
+    private var checklist: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(model.items.enumerated()), id: \.element.id) { index, item in
+                ReadinessRow(item: item)
+                if index < model.items.count - 1 {
+                    Divider()
+                        .overlay(FamiliarPalette.stroke(scale))
+                        .padding(.leading, dividerInset)   // lines up with the text column at every icon scale
+                }
+            }
+        }
+        .surfaceCard(padding: 6)
+    }
+
+    /// Row padding (12) + icon well (32 × iconScale) + row spacing (14); none in the stacked accessibility layout.
+    private var dividerInset: CGFloat {
+        typeSize.isAccessibilitySize ? 0 : 26 + 32 * scale.iconScale
+    }
+}
+
+/// One permission or resource: status icon, title, detail and the status word in a chip. One VoiceOver element.
+private struct ReadinessRow: View {
+    let item: ReadinessModel.Item
+    @Environment(\.visionScale) private var scale
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        Group {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) { icon; chip }
+                    text
+                }
+            } else {
+                HStack(spacing: 14) {
+                    icon
+                    text
+                    Spacer(minLength: 8)
+                    chip
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+        .frame(minHeight: scale.hitTarget)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(item.title): \(item.status.word). \(item.detail)")
+    }
+
+    private var icon: some View {
+        Image(systemName: item.status.symbol)
+            .visionIcon(scale, base: 22)
+            .foregroundStyle(item.status.color)
+            .frame(width: 32 * scale.iconScale)
+            .accessibilityHidden(true)
+    }
+
+    private var text: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.title)
+                .font(FamiliarType.body(scale))
+                .foregroundStyle(FamiliarPalette.ink(scale))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(item.detail)
+                .font(FamiliarType.supporting(scale))
+                .foregroundStyle(FamiliarPalette.inkSecondary(scale))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var chip: some View {
+        StatusChip(text: item.status.word, systemImage: item.status.symbol, tint: item.status.color)
+            .contentTransition(.opacity)
     }
 }
 
@@ -48,7 +160,7 @@ struct ReadinessView: View {
 final class ReadinessModel: NSObject, ObservableObject, CLLocationManagerDelegate {
     enum Status { case unknown, ok, missing, denied
         var symbol: String { switch self { case .unknown: return "circle"; case .ok: return "checkmark.circle.fill"; case .missing: return "exclamationmark.circle"; case .denied: return "xmark.circle.fill" } }
-        var color: Color { switch self { case .unknown: return .secondary; case .ok: return .green; case .missing: return .orange; case .denied: return .red } }
+        var color: Color { switch self { case .unknown: return FamiliarPalette.inkSecondary; case .ok: return FamiliarPalette.success; case .missing: return FamiliarPalette.warning; case .denied: return FamiliarPalette.danger } }
         var word: String { switch self { case .unknown: return "not checked"; case .ok: return "ready"; case .missing: return "missing"; case .denied: return "denied" } }
     }
     struct Item: Identifiable { let id: String; let title: String; let detail: String; var status: Status }
@@ -76,7 +188,6 @@ final class ReadinessModel: NSObject, ObservableObject, CLLocationManagerDelegat
         update("model", Bundle.main.url(forResource: "w600k_mbf", withExtension: "onnx") == nil ? .missing : .ok)
         update("keys", (Secrets.elevenLabsAPIKey != nil && Secrets.metaModelAPIKey != nil) ? .ok : .missing)
         update("route", AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .bluetoothA2DP || $0.portType == .bluetoothHFP } ? .ok : .missing)
-        items.first(where: { $0.id == "route" }).map { _ in }
         if let i = items.firstIndex(where: { $0.id == "route" }), items[i].status == .missing { items[i] = Item(id: "route", title: "Audio route", detail: "Phone only. Pair the glasses for the real thing", status: .missing) }
     }
 
@@ -102,4 +213,8 @@ final class ReadinessModel: NSObject, ObservableObject, CLLocationManagerDelegat
 
     private func set(_ id: String, from ok: Bool) { update(id, ok ? .ok : .denied) }
     private func update(_ id: String, _ s: Status) { if let i = items.firstIndex(where: { $0.id == id }) { items[i].status = s } }
+}
+
+#Preview("Readiness") {
+    ReadinessView(onDone: {})
 }

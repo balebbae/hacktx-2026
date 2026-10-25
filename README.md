@@ -22,6 +22,17 @@ xcodebuild -scheme Familiar -destination 'platform=iOS Simulator,name=iPhone 17'
 
 On a device: select your personal team under Signing & Capabilities once; the bundle id is `com.familiar.hacktx`. In the Simulator the app defaults to the fixture source (`mixed.mp4`) with `ScriptedPerception`, `FakeTranscriber` and `LogSpeaker` (Apple voice), so the Judge view shows scripted boxes and spoken cues without any hardware.
 
+### Design branch (`sahas`)
+The `sahas` branch carries the full SwiftUI redesign (docs/DESIGN_SPEC.md, docs/DESIGN_SYSTEM.md, docs/UI_CONTRACTS.md). Build notes specific to it:
+
+- **Fonts.** Plus Jakarta Sans Regular/Medium/SemiBold/Bold live in `Familiar/Resources/Fonts/` and are registered in `Familiar/Info.plist` under `UIAppFonts`. Every label goes through `FamiliarType.*(scale)`; if the fonts ever go missing from the bundle, `FamiliarFont` falls back to the rounded system face instead of Times New Roman.
+- **libraries.dev kits.** Six products of the `Libraries.dev` package (branch `main`, pinned in `Package.resolved`) are linked to the app target in `project.pbxproj`: `BotAvatarsKit` (Mimo), `ThinkingOrbsKit` (status orb), `VoiceGlowKit` (consent card glow), `BorderBeamKit` (nearby card and consent card beams), `MetalFxKit` + its dependency `MagnetKit` (the liquid-metal "Who's here?" ring). Xcode resolves them on first open; if resolution fails, File → Packages → Resolve Package Versions. The MetalFx shaders compile as part of the normal build.
+- **iOS 18 APIs.** `MeshGradient`, `Color.mix`, `Group(subviews:)` and `onScrollPhaseChange` are used unguarded because `IPHONEOS_DEPLOYMENT_TARGET` is 18.0. The one iOS 26 API (`glassEffect` on the pager's edge strips) sits behind `#if compiler(>=6.2)` + `if #available(iOS 26, *)`, so Xcode 16 builds the material fallback and Xcode 26 the liquid glass.
+- **Launch arguments.** `--onboarding` replays the first-launch flow; `--glasses` opens the glasses registration directly and boots the pipeline at once; `-demoConsentCard` shows the consent card over the tabs for screenshots.
+- **First launch.** Onboarding runs before the pipeline boots, so no camera or microphone prompt appears over the Welcome page; the permissions checklist (`ReadinessView`) is the Privacy page's Continue step and reappears once on Today if it was skipped.
+- **Snapshots.** `SNAPSHOT_DIR=$PWD/docs/snapshots xcodebuild … -only-testing:FamiliarTests/SnapshotRenderTests test` renders Welcome, Today, Room radar, People, consent card, Accessibility settings and Mimo at the balanced and severe vision profiles.
+- **What was not possible on the design machines.** The branch was written on Macs without an iOS SDK: every file passes `xcrun swiftc -parse` (Swift 5 and 6 modes) and the kit signatures were checked against the pinned libraries.dev sources, but the first real `xcodebuild` happens on your Mac. If something fails to type-check, the usual suspects are listed in docs/HANDOFF.md under "Design branch (sahas)".
+
 ### Secrets
 `Secrets.xcconfig` → Info.plist keys → `Familiar/App/Secrets.swift` (nil when empty). Keys: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_AGENT_ID`, `META_MODEL_API_KEY`, `MODAL_EMBED_URL`, `MODAL_KEY`, `MODAL_SECRET`. URLs in xcconfig need `$()/` in place of `//` (`https:$()/$()/...`).
 

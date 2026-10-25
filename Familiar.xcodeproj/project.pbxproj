@@ -15,6 +15,9 @@
 		C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB21 /* BotAvatarsKit */; };
 		C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB22 /* ThinkingOrbsKit */; };
 		C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB23 /* VoiceGlowKit */; };
+		C0FFEE00000000000000AB14 /* BorderBeamKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB24 /* BorderBeamKit */; };
+		C0FFEE00000000000000AB15 /* MetalFxKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB25 /* MetalFxKit */; };
+		C0FFEE00000000000000AB16 /* MagnetKit in Frameworks */ = {isa = PBXBuildFile; productRef = C0FFEE00000000000000AB26 /* MagnetKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +83,9 @@
 				C0FFEE00000000000000AB11 /* BotAvatarsKit in Frameworks */,
 				C0FFEE00000000000000AB12 /* ThinkingOrbsKit in Frameworks */,
 				C0FFEE00000000000000AB13 /* VoiceGlowKit in Frameworks */,
+				C0FFEE00000000000000AB14 /* BorderBeamKit in Frameworks */,
+				C0FFEE00000000000000AB15 /* MetalFxKit in Frameworks */,
+				C0FFEE00000000000000AB16 /* MagnetKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -162,6 +168,9 @@
 				C0FFEE00000000000000AB21 /* BotAvatarsKit */,
 				C0FFEE00000000000000AB22 /* ThinkingOrbsKit */,
 				C0FFEE00000000000000AB23 /* VoiceGlowKit */,
+				C0FFEE00000000000000AB24 /* BorderBeamKit */,
+				C0FFEE00000000000000AB25 /* MetalFxKit */,
+				C0FFEE00000000000000AB26 /* MagnetKit */,
 			);
 			productName = Familiar;
 			productReference = 206921FA0F7370D6772196A6 /* Familiar.app */;
@@ -570,6 +579,21 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
 			productName = VoiceGlowKit;
+		};
+		C0FFEE00000000000000AB24 /* BorderBeamKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = BorderBeamKit;
+		};
+		C0FFEE00000000000000AB25 /* MetalFxKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = MetalFxKit;
+		};
+		C0FFEE00000000000000AB26 /* MagnetKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0FFEE00000000000000AB10 /* XCRemoteSwiftPackageReference "Libraries.dev" */;
+			productName = MagnetKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -60,7 +60,9 @@ final class LogSpeaker: NSObject, Speaker, @unchecked Sendable {
         if speakAloud {
             let su = AVSpeechUtterance(string: u.text)
             su.voice = AVSpeechSynthesisVoice(language: "en-US")
-            su.rate = AVSpeechUtteranceDefaultSpeechRate
+            let scaled = AVSpeechUtteranceDefaultSpeechRate * Float(SpeechPreferences.rateMultiplier())
+            su.rate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, scaled))
+            su.volume = Float(SpeechPreferences.volume())
             synthesizer.speak(su)
         }
         if simulateDuration {

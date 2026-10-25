@@ -77,26 +77,60 @@ actor AsyncSemaphore {
     }
 }
 
+/// The wearer's speech preferences from You → Accessibility, read by key so the Voice module does not depend on the
+/// UI (`YouSettings.speechRate` / `speechVolume` write them). A missing key means "unchanged": fresh installs and
+/// the test host hear the voice exactly as before. Read at use, so a slider moves the next cue.
+enum SpeechPreferences {
+    static let rateKey = "speechRate"
+    static let volumeKey = "speechVolume"
+    /// The Voice and cues toggle for "Marcus." when a known person starts talking. Default on, as the policy always was.
+    static let speakingCueKey = "cueSpeaking"
+
+    /// 0.8…1.3, default 1: multiplies the voice's natural pace.
+    static func rateMultiplier(_ defaults: UserDefaults = .standard) -> Double {
+        guard let value = defaults.object(forKey: rateKey) as? Double else { return 1 }
+        return min(1.3, max(0.8, value))
+    }
+
+    /// 0.3…1, default 1: a linear gain applied to every utterance, inside the phone volume.
+    static func volume(_ defaults: UserDefaults = .standard) -> Double {
+        guard let value = defaults.object(forKey: volumeKey) as? Double else { return 1 }
+        return min(1, max(0.3, value))
+    }
+
+    static func speakingCueEnabled(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: speakingCueKey) as? Bool ?? true
+    }
+}
+
 enum VoiceFactory {
     /// Sarah (premade, American, "mature, reassuring, confident"). Overridden by `ELEVENLABS_VOICE_ID`.
     static let defaultVoiceID = "EXAVITQu4vr4xnSDxMaL"
     static let model = "eleven_flash_v2_5"
 
-    /// ElevenLabs (cached on disk) with Apple fallback when a key is present; Apple only otherwise.
+    /// ElevenLabs (cached on disk) with Apple fallback when a key is present; Apple only otherwise. Both follow the
+    /// wearer's speech rate (`SpeechPreferences`); volume is applied once, in the speaker.
     static func makeSynthesizer(apiKey: String?, voiceID: String? = nil, cacheDirectory: URL? = nil, session: URLSession = .shared) -> SpeechSynthesizer {
         let apple = AppleTTS()
+        apple.rateMultiplier = { SpeechPreferences.rateMultiplier() }
         guard let apiKey, !apiKey.isEmpty else { return apple }
         let cache = cacheDirectory.map(PhraseCache.init(directory:)) ?? PhraseCache()
         let eleven = ElevenLabsTTS(apiKey: apiKey, voiceID: voiceID ?? defaultVoiceID, cache: cache, session: session)
+        eleven.speedProvider = { SpeechPreferences.rateMultiplier() }
         return FallbackSynthesizer(primary: eleven, fallback: apple)
     }
 
     /// The production speaker: priority queue over the given synthesizer and playback.
     static func makeSpeaker(apiKey: String? = Secrets.elevenLabsAPIKey, voiceID: String? = Secrets.elevenLabsVoiceID, playback: PCMPlayback, cacheDirectory: URL? = nil, clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) -> VoiceSpeaker {
-        VoiceSpeaker(synthesizer: makeSynthesizer(apiKey: apiKey, voiceID: voiceID, cacheDirectory: cacheDirectory), playback: playback, clock: clock)
+        let speaker = VoiceSpeaker(synthesizer: makeSynthesizer(apiKey: apiKey, voiceID: voiceID, cacheDirectory: cacheDirectory), playback: playback, clock: clock)
+        speaker.volumeProvider = { Float(SpeechPreferences.volume()) }
+        return speaker
     }
 
-    static func makeCuePolicy() -> FamiliarCuePolicy { FamiliarCuePolicy() }
+    /// The production policy honours the "Speaking first" toggle; `FamiliarCuePolicy()` alone (tests) keeps it on.
+    static func makeCuePolicy() -> FamiliarCuePolicy {
+        FamiliarCuePolicy(speakingCueEnabled: { SpeechPreferences.speakingCueEnabled() })
+    }
 }
 
 extension Phrasebook {

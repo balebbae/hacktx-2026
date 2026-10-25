@@ -6,6 +6,7 @@ import SwiftUI
 /// live preview. S5 links it from Settings; `--glasses` launch argument opens it at start.
 struct GlassesRegistrationView: View {
     @StateObject private var model: GlassesRegistrationModel
+    @Environment(\.visionScale) private var scale
 
     init(source: GlassesFrameSource? = nil) {
         _model = StateObject(wrappedValue: GlassesRegistrationModel(source: source))
@@ -24,7 +25,7 @@ struct GlassesRegistrationView: View {
                 } else {
                     Button { model.connect() } label: {
                         Label("Connect glasses", systemImage: "eyeglasses")
-                            .font(.title3.weight(.semibold))
+                            .font(FamiliarType.control(scale))
                     }
                     .disabled(model.registration == .registering || model.registration == .unavailable)
                     .accessibilityHint("Opens the Meta AI app to approve this app. Developer Mode must be on.")

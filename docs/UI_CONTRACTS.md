@@ -77,6 +77,21 @@ enum FamiliarHaptics { static func play(_ kind: HapticKind) }   // CoreHaptics p
 ```
 All motion uses `.spring(response: 0.44, dampingFraction: 0.78)` for small Mimo-like moves and `.easeInOut` for diffusion.
 
+Additive overloads that shipped (the signatures above remain valid):
+`GlassEdgePager(selection: Binding<Int?>, content:)` and `(selection: Binding<Int>, content:)`; `PagerIndicator(count:index:tint:)`;
+`CueToast(text:systemImage:tint:edge:)` (`.top` drops in, default `.bottom` rises) plus `CueToast.spring()`, `CueToast.transition(simplify:edge:)`,
+`CueToastHost(message:seconds:content:)` / `CueToastMessage(text:systemImage:tint:)`; `ShimmerText(_:font:color:highlight:)` (pass a tint on light text);
+`SlidingPillSegment(options:selection:label:)` and `GooeyMenu(systemImage:label:items:)` (the `label:` is the VoiceOver name; People uses both);
+`View.tilt3D(maxDegrees:)`, `View.familiarHaptic(_:trigger:)`, `FamiliarHaptics.prepare()` / `.isEnabled` / `.isSupported`, `HapticKind.title`.
+
+Added by the final fixer pass (all additive; the signatures above remain valid):
+- `CueToast(text:systemImage:tint:edge:actionTitle:actionHint:action:)` — one small trailing action pill, also a VoiceOver custom action (MainTabView's "Repeat").
+- `struct SpokenCue { id, at, utterance }` and `AppState.spokenCues` / `lastSpokenCue` / `noteSpoken(_:at:)` — every line that reached playback, from both speakers; `MainTabView` fills it, Today and Room read it instead of `coordinator.utterances` (the LogSpeaker-only feed).
+- `enum MimoPresence { full, compact, hidden }` + `YouSettings.mimoPresence` — Mimo visibility on Today and Room.
+- `RoomPeopleList(tracks:awarenessActive:people:onDetails:)` — cards offer Details for a remembered person.
+- `UserSettings.volumePrimary` accepts `"pauseCues"`; `MainTabView` toggles the cue gate for it.
+- Voice: `SpeechPreferences` (keys `speechRate`, `speechVolume`, `cueSpeaking`), `AppleTTS.rateMultiplier`, `ElevenLabsTTS.speedProvider` / `speed` / `cacheModel(_:speed:)`, `VoiceSpeaker.volumeProvider`, `FamiliarCuePolicy(cooldowns:speakingCueEnabled:)`.
+
 ## Screens and ownership (one session per row; never edit another row's files)
 | Session | Owns | Builds |
 |---|---|---|
