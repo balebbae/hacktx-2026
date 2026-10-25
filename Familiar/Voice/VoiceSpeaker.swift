@@ -120,6 +120,8 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
         var samples = [Float](repeating: 0, count: Int(leadingSilence * audio.sampleRate))
         if u.earcon { samples += Earcon.prefix(for: audio.sampleRate) }
         samples += audio.samples
+        let gain = SpeakerVolumeHint.gain(for: u)   // S7: whispered cues
+        if gain != 1 { samples = samples.map { $0 * gain } }
         state.withLock { $0.speaking = true }
         let window = await playback.play(SynthesizedAudio(samples: samples, sampleRate: audio.sampleRate, source: audio.source), audience: u.audience)
         let spoken = Spoken(utterance: u, window: window, source: audio.source)

@@ -8,7 +8,8 @@ import os
 ///                normal = quiet + approaching, left, speaking
 ///                chatty = normal + "someone close" for strangers
 /// Cooldowns:     appeared 30 s · approaching 20 s (and never within 5 s after an arrival) · arrived 30 s ·
-///                left only if the person was close within the last 120 s · unknown close 20 s · speaking once per track.
+///                left only if the person was close within the last 120 s · unknown close 20 s · speaking once per track
+///                (S7: priority 1, no earcon, played −6 dB via `SpeakerVolumeHint`; `ActiveSpeaker` already gates by person).
 /// `approaching` and `arrived` share a dedupeKey so an arrival within 5 s replaces a still-queued approach.
 final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
     struct Cooldowns {
@@ -81,7 +82,7 @@ final class FamiliarCuePolicy: CuePolicy, @unchecked Sendable {
             case let .speakingStarted(t):
                 guard mode != .quiet, case let .known(pid, name, _) = t.identity else { return [] }
                 guard s.spokenTracks.insert(t.trackID).inserted else { return [] }
-                return [cue(Phrasebook.speaking(name: name), pid, "speaking", priority: 2, dedupeKey: "speaking:\(pid.uuidString)", earcon: false)]
+                return [cue(Phrasebook.speaking(name: name), pid, "speaking", priority: 1, dedupeKey: "speaking:\(pid.uuidString)", earcon: false)]   // S7
 
             case let .snapshot(tracks, _):
                 for t in tracks { if case let .known(pid, _, _) = t.identity, t.distance == .close { s.people[pid, default: PersonState()].lastClose = now } }

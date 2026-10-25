@@ -26,6 +26,20 @@ protocol PCMPlayback: AnyObject {
     func stop()
 }
 
+/// S7: `Utterance` (Core, frozen) carries no volume, so the speaker looks the gain up by category / dedupeKey.
+/// "Marcus." for a person who just started talking is whispered at −6 dB; everything else plays at unity.
+enum SpeakerVolumeHint {
+    static let speakingGainDB: Float = -6
+
+    static func gainDB(for u: Utterance) -> Float {
+        if u.category == "speaking" || (u.dedupeKey?.hasPrefix("speaking:") ?? false) { return speakingGainDB }
+        return 0
+    }
+
+    /// Linear multiplier for the PCM samples.
+    static func gain(for u: Utterance) -> Float { powf(10, gainDB(for: u) / 20) }
+}
+
 /// Tries `primary` and falls back to `fallback` on any error (including the 1.2 s first-byte timeout).
 final class FallbackSynthesizer: SpeechSynthesizer {
     let primary: SpeechSynthesizer
