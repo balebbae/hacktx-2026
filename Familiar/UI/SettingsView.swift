@@ -76,7 +76,15 @@ struct SettingsView: View {
             }
             YouDivider(inset: YouMetrics.plainInset)
             YouChoiceRow(title: "Volume button", detail: "What a press of a volume button triggers. Ask Poyo: click, then talk") {
-                SlidingPillSegment(options: Self.volumeOptions, selection: $volumePrimary, label: "Volume button")
+                Picker("Volume button", selection: $volumePrimary) {
+                    ForEach(Self.volumeOptions, id: \.0) { Text($0.1).tag($0.0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .tint(FamiliarPalette.ink(scale))
+                .font(FamiliarType.body(scale))
+                .frame(minHeight: scale.hitTarget, alignment: .leading)
+                .accessibilityHint("What a press of a volume button triggers")
             }
             YouDivider(inset: YouMetrics.plainInset)
             YouToggleRow(title: "Speak cues aloud (Simulator)",
