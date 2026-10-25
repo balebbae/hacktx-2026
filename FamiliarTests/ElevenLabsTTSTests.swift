@@ -110,6 +110,67 @@ final class ElevenLabsTTSTests: XCTestCase {
         XCTAssertEqual(SpeechPreferences.volume(defaults), 0.3)
     }
 
+    func testPrewarmWaitsForLiveLines() async throws {
+        TTSStubURLProtocol.handler = { _ in (200, PCM16.encode([Float](repeating: 0.1, count: 160))) }
+        TTSStubURLProtocol.delay = 0.3
+        let tts = makeTTS()
+        let live = Task { try await tts.synthesize("Marcus left.") }
+        try await Task.sleep(for: .milliseconds(30))
+        let warm = Task { try await tts.warm("Muted.") }
+        try await Task.sleep(for: .milliseconds(120))
+        XCTAssertEqual(TTSStubURLProtocol.requests.count, 1, "the prewarm request waits while a live line is in flight")
+        _ = try await live.value
+        try await warm.value
+        let texts = TTSStubURLProtocol.requests.map { (try? JSONSerialization.jsonObject(with: $0.body) as? [String: Any])?["text"] as? String ?? "" }
+        XCTAssertEqual(texts, ["Marcus left.", "Muted."])
+        XCTAssertTrue(tts.isCached("Muted."))
+    }
+
+    func testStreamDeliversChunksThenCaches() async throws {
+        let pcm = PCM16.encode([Float](repeating: 0.5, count: 16_000))        // 1 s = 32 000 bytes
+        TTSStubURLProtocol.handler = { _ in (200, pcm) }
+        let tts = makeTTS()
+        let stream = try XCTUnwrap(tts.stream("Which door, the left one?"))
+        var chunks: [[Float]] = []
+        for try await c in stream { chunks.append(c) }
+        XCTAssertEqual(chunks.count, 5, "200 ms per chunk")
+        XCTAssertEqual(chunks.map(\.count).reduce(0, +), 16_000)
+        XCTAssertEqual(chunks[0][5], 0.5, accuracy: 0.001)
+        let sent = try XCTUnwrap(TTSStubURLProtocol.requests.first)
+        XCTAssertEqual(sent.request.url?.absoluteString, "https://api.elevenlabs.io/v1/text-to-speech/VOICE/stream?output_format=pcm_16000")
+        XCTAssertTrue(tts.isCached("Which door, the left one?"), "the whole clip is cached once the stream ends")
+        XCTAssertNil(tts.stream("Which door, the left one?"), "cached text takes the plain, instant path")
+    }
+
+    func testStreamFailsBeforeTheFirstChunkOnABadStatus() async {
+        TTSStubURLProtocol.handler = { _ in (429, Data()) }
+        let tts = makeTTS()
+        guard let stream = tts.stream("x") else { return XCTFail("expected a stream") }
+        do {
+            for try await _ in stream { XCTFail("no chunk expected") }
+            XCTFail("expected failure")
+        } catch let e as ElevenLabsTTS.Failure {
+            XCTAssertEqual(e, .httpStatus(429))
+        } catch { XCTFail("\(error)") }
+        XCTAssertFalse(tts.isCached("x"))
+    }
+
+    func testTheLineJustSpokenBecomesPreviousText() async throws {
+        TTSStubURLProtocol.handler = { _ in (200, PCM16.encode([Float](repeating: 0.1, count: 160))) }
+        let tts = makeTTS()
+        let speaker = VoiceSpeaker(synthesizer: FallbackSynthesizer(primary: tts, fallback: FakeSynth(id: "apple")), playback: FakePlayback(), sleep: { _ in })
+        speaker.streaming = false
+        XCTAssertEqual(tts.previousText, "Here is what I see.")
+        _ = await speaker.speak(.test("Marcus left."))
+        XCTAssertEqual(tts.previousText, "Marcus left.")
+        _ = await speaker.speak(.test("Toward 1 o'clock, I think."))
+        XCTAssertEqual(tts.previousText, "Toward 1 o'clock, I think.")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: TTSStubURLProtocol.requests[1].body) as? [String: Any])
+        XCTAssertEqual(body["previous_text"] as? String, "Marcus left.", "the second request continues from the first line")
+        _ = await speaker.speak(Utterance(text: "Okay to remember your face?", priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .otherPerson, earcon: false))
+        XCTAssertEqual(tts.previousText, "Toward 1 o'clock, I think.", "a line to the other person is not part of the wearer's thread")
+    }
+
     func testFactoryWithoutKeyIsAppleOnly() {
         let synth = VoiceFactory.makeSynthesizer(apiKey: nil, cacheDirectory: dir)
         XCTAssertEqual(synth.id, "apple")

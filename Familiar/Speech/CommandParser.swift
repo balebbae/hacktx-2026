@@ -22,7 +22,8 @@ enum CommandParser {
     private static func name(_ raw: String) -> String? {
         var n = raw.replacingOccurrences(of: "\\b(please|now|for me)\\b", with: "", options: .regularExpression)
         n = n.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-        guard !n.isEmpty, n.count <= 40, !["them", "him", "her", "me", "it", "someone", "somebody"].contains(n) else { return nil }
+        // Pronouns are not names: "where did he go" is a question for Poyo, who knows who "he" is from the dialogue.
+        guard !n.isEmpty, n.count <= 40, !["them", "him", "her", "me", "it", "someone", "somebody", "he", "she", "they", "that", "this", "my", "your", "our", "the", "a"].contains(n) else { return nil }
         return n.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
 
@@ -105,6 +106,11 @@ final class WakeWordCommandSource: CommandSource, @unchecked Sendable {
         if let volatile = (transcriber as? VolatileTextSource)?.subscribeVolatile() {
             tasks.append(Task.detached { [weak self] in
                 for await v in volatile { self?.wakeWord.feed(text: v.text, isFinal: false, t: v.t) }
+            })
+        }
+        if let endpoints = (transcriber as? EndpointSource)?.subscribeEndpoints() {
+            tasks.append(Task.detached { [weak self] in
+                for await t in endpoints { self?.wakeWord.endpoint(at: t); self?.wakeWord.tick(now: CACurrentMediaTime()) }
             })
         }
         tasks.append(Task.detached { [weak self] in

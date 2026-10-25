@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import QuartzCore
+import AVFoundation
 import os
 
 /// Dependency container. `make(source:)` wires whatever implementations exist; today (S1) that is the fakes
@@ -55,6 +56,8 @@ final class Services: ObservableObject {
     let cloudScene = CloudScene(client: VisionLLMClient())
     /// Is the wearer walking (phone motion or the view expanding)? Gates wall and hazard alerts.
     let motion = MotionState()
+    /// What the wearer and Poyo said lately, whichever lane said it; Poyo's model turns and "say that again" read it.
+    let dialogue = DialogueMemory()
 
     /// Convenience accessors for the skeleton UI (nil when the real module is wired instead).
     var logSpeaker: LogSpeaker? { speaker as? LogSpeaker }
@@ -109,7 +112,13 @@ final class Services: ObservableObject {
             speaker = LogSpeaker(speakAloud: state.speakLogSpeakerAloud)
         } else {
             let useEleven = defaults.string(forKey: UserSettings.voiceProvider) != "apple"
-            speaker = VoiceFactory.makeSpeaker(apiKey: useEleven ? Secrets.elevenLabsAPIKey : nil, playback: engine)
+            let voice = VoiceFactory.makeSpeaker(apiKey: useEleven ? Secrets.elevenLabsAPIKey : nil, playback: engine)
+            voice.streaming = defaults.object(forKey: UserSettings.streamingTTS) as? Bool ?? true
+            // The 150 ms lead-in only matters for Bluetooth output, which swallows the first syllable otherwise.
+            voice.isBluetoothOutput = {
+                AVAudioSession.sharedInstance().currentRoute.outputs.contains { [.bluetoothA2DP, .bluetoothHFP, .bluetoothLE].contains($0.portType) }
+            }
+            speaker = voice
         }
 
         let vad = AudioFactory.makeVoiceActivity(audio: engine.rawInput)
@@ -130,7 +139,7 @@ final class Services: ObservableObject {
         #endif
         let commands: [CommandSource] = [SpeechFactory.makeCommandSource(transcriber: transcriber)]
 
-        let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: peopleStore, contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
+        let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: peopleStore, contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNoClassifier(), consentFlow: StubConsentFlow(), commandSources: commands)
         services.transcriberAudio = engine.transcriberInput
         services.vad = vad
         return services
@@ -155,7 +164,7 @@ extension AudioRoute {
 struct PassThroughCuePolicy: CuePolicy {
     func utterances(for e: PerceptionEvent, mode: ChatterMode, now: TimeInterval) -> [Utterance] {
         func u(_ text: String, _ pid: UUID?, _ category: String, priority: Int = 1) -> Utterance {
-            Utterance(text: text, priority: priority, category: category, personID: pid, dedupeKey: "\(category):\(pid?.uuidString ?? "")", audience: .user, earcon: true)
+            Utterance(text: text, priority: priority, category: category, personID: pid, dedupeKey: "\(category):\(pid?.uuidString ?? "")", audience: .user, earcon: false)
         }
         switch e {
         case let .knownAppeared(t): if case let .known(pid, name, _) = t.identity { return [u(Phrasebook.appeared(name: name, bearing: t.bearing, distance: t.distance), pid, "appeared")] }
@@ -212,15 +221,6 @@ struct NoopContactsBridge: ContactsBridge {
 
 struct NoopNameExtractor: NameExtractor {
     func otherPersonName(segments: [TranscriptSegment], userName: String) async -> NameGuess { NameGuess(name: nil, confidence: 0, source: "none") }
-}
-
-struct RulesYesNo: YesNoClassifier {
-    func classify(_ reply: String) async -> YesNo {
-        let r = reply.lowercased()
-        if ["yes", "yeah", "yep", "yup", "sure", "okay", "ok", "of course", "go ahead", "fine", "absolutely"].contains(where: { r.contains($0) }) { return .yes }
-        if ["no", "nope", "nah", "rather not", "don't"].contains(where: { r.contains($0) }) { return .no }
-        return .unclear
-    }
 }
 
 final class StubConsentFlow: ConsentFlow {

@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import QuartzCore
+import os
 
 /// Owns the live `Services`, runs the perception → cue policy → gate → speaker loop, and keeps the judge-view feeds
 /// (latest snapshot, utterance log, event log, transcript). S5 extends this with audio lifecycle and the command router.
@@ -20,14 +21,19 @@ final class AppCoordinator: ObservableObject {
     @Published private(set) var lastError: String?
     /// Latest vision reading (judge view).
     @Published private(set) var sceneReading: SceneReading?
-    /// Deep link waiting for the UI (`familiar://introduce` from an NFC tag opens the self-enroll flow). HomeView clears it.
+    /// Deep link waiting for the UI (`familiar://introduce` opens the self-enroll flow). HomeView clears it.
     @Published var pendingRoute: AppRoute?
 
     private var tasks: [Task<Void, Never>] = []
     private weak var state: AppState?
     private var frameTimes: [TimeInterval] = []
     private var narration = NarrationPolicy()
+    /// One hazard is one hazard, whichever detector saw it first.
+    private var hazards = HazardRegistry()
     private var lastCaptionAt: TimeInterval = -.infinity
+    /// A routine caption waiting for a pause in the dialogue; in a busy room the pause comes a few seconds later.
+    private var pendingCaption: (u: Utterance, at: TimeInterval)?
+    private let captionPatience: TimeInterval = 10
 
     /// True when the app is only the XCTest host: the live pipeline stays off so background tasks never interfere with tests.
     static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
@@ -65,7 +71,9 @@ final class AppCoordinator: ObservableObject {
         }
         s.scene.start(frames: s.frameSource)
         narration = NarrationPolicy()
+        hazards = HazardRegistry()
         lastCaptionAt = -.infinity
+        pendingCaption = nil
         sceneReading = nil
         s.cloudScene.trackedFaces = { [weak perception = s.perception] in perception?.currentTracks().map(\.faceBox) ?? [] }
         s.scene.faces = { [weak perception = s.perception] in perception?.currentTracks() ?? [] }
@@ -74,12 +82,27 @@ final class AppCoordinator: ObservableObject {
         s.scene.onExpansion = { [weak motion = s.motion] rate, t in motion?.noteExpansion(rate, at: t) }
         s.cloudScene.isMoving = { [weak motion = s.motion] in motion?.isMoving() ?? false }
         s.cloudScene.start(frames: s.frameSource)
-        // Alerts must play the moment they are decided: fill the TTS cache for them once (kept on disk).
-        tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.alertPhrases + Phrasebook.actionAlertPhrases) })
+        // Alerts must play the moment they are decided, and the first "Marcus, coming toward you." must not switch
+        // to the Apple voice: fill the TTS cache for the alerts, then for everyone in the store (kept on disk).
+        let names = s.peopleStore.all().map(\.name)
+        tasks.append(Task.detached(priority: .background) { await s.speaker.prewarm(Phrasebook.demoVocabulary(names: names)) })
+        // Every line that reaches the wearer's ear is a turn Poyo took, whichever lane wrote it: the model and
+        // "say that again" read them back from `dialogue`.
         if let voice = s.speaker as? VoiceSpeaker {
+            // The mic is muted while the app speaks, so a cue that starts over the wearer's "Poyo, …" eats the wake
+            // word: routine cues wait (briefly) while the recognizer shows someone mid-sentence.
+            if let volatile = (s.transcriber as? VolatileTextSource)?.subscribeVolatile() {
+                let lastVolatileAt = OSAllocatedUnfairLock<TimeInterval>(initialState: -Double.infinity)
+                tasks.append(Task.detached { for await _ in volatile { lastVolatileAt.withLock { $0 = CACurrentMediaTime() } } })
+                voice.speechInProgress = { CACurrentMediaTime() - lastVolatileAt.withLock { $0 } < 0.7 }
+            }
             // Chain onto whatever is already listening: the tab view mirrors spoken lines into Room captions and toasts.
             let mirrored = voice.onSpoken
-            voice.onSpoken = { mirrored?($0); DiagnosticLog.write("said[p\($0.utterance.priority) \($0.utterance.category)\($0.source == "apple" ? " apple" : "")] \($0.utterance.text)") }
+            voice.onSpoken = { spoken in
+                mirrored?(spoken)
+                DiagnosticLog.write("said[p\(spoken.utterance.priority) \(spoken.utterance.category)\(spoken.source == "apple" ? " apple" : "")] \(spoken.utterance.text)")
+                if spoken.utterance.audience == .user { s.dialogue.record(.poyo, spoken.utterance.text, at: spoken.window?.lowerBound ?? CACurrentMediaTime()) }
+            }
             voice.onDropped = { u, why in DiagnosticLog.write("dropped[\(u.category)] \(why): \(u.text)") }
         }
         tasks.append(Task { [weak self] in
@@ -92,11 +115,20 @@ final class AppCoordinator: ObservableObject {
             for await frame in s.frameSource.subscribe() { await self?.noteFrame(at: frame.timestamp) }
         })
         tasks.append(Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                self?.flushPendingCaption(services: s)
+            }
+        })
+        tasks.append(Task { [weak self] in
             for await event in s.perception.subscribe() { await self?.handle(event: event, services: s, state: state) }
         })
         if let logSpeaker = s.logSpeaker {
             tasks.append(Task { [weak self] in
-                for await entry in logSpeaker.subscribe() { await MainActor.run { self?.utterances = Array((self?.utterances ?? []).suffix(49)) + [entry] } }
+                for await entry in logSpeaker.subscribe() {
+                    if entry.utterance.audience == .user { s.dialogue.record(.poyo, entry.utterance.text, at: entry.at) }
+                    await MainActor.run { self?.utterances = Array((self?.utterances ?? []).suffix(49)) + [entry] }
+                }
             })
         }
         tasks.append(Task { [weak self] in
@@ -221,28 +253,46 @@ final class AppCoordinator: ObservableObject {
         switch e {
         case let .hazard(kind):
             guard s.motion.isMoving() else { return }        // standing still: not about to walk into it
+            // The vision model may have said "Stairs down, 12 o'clock, 3 meters." a second ago: same stairs.
+            guard hazards.admit(HazardSighting(kind: kind.rawValue, clock: 12, meters: nil), now: CACurrentMediaTime()) else { log("hazard \(kind.rawValue) already announced"); return }
             u = Utterance(text: Phrasebook.hazard(kind), priority: 0, category: "hazard", personID: nil, dedupeKey: "hazard:\(kind.rawValue)", audience: .user, earcon: true)
         case let .placeChanged(place):
             guard state.mode == .chatty, !conversationActive(s) else { return }
             u = Utterance(text: Phrasebook.place(place), priority: 3, category: "place", personID: nil, dedupeKey: "place", audience: .user, earcon: false)
         case let .action(c):
             let now = CACurrentMediaTime()
-            // A dialogue gap: nothing heard in the last 1.5 s, like audio description between a film's lines.
             guard let a = ActionCaption.utterance(for: c, mode: state.mode, moving: s.motion.isMoving(), inConversation: conversationActive(s),
-                                                  inDialogueGap: s.transcriber.recentSegments(seconds: 1.5).isEmpty, sinceLast: now - lastCaptionAt) else { return }
+                                                  inDialogueGap: true, sinceLast: now - lastCaptionAt) else { return }
             lastCaptionAt = now
+            // Routine captions fit between lines of dialogue, like a film's audio description: held for the next pause.
+            if a.priority >= 2, !inDialogueGap(s) { pendingCaption = (a, now); return }
             u = a
         }
         guard s.cueGate.admit(u) else { return }
         Task { await s.speaker.speak(u) }
     }
 
-    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed.
+    /// Nothing heard in the last second.
+    private func inDialogueGap(_ s: Services) -> Bool { s.transcriber.recentSegments(seconds: 1).isEmpty }
+
+    private func flushPendingCaption(services s: Services) {
+        guard let p = pendingCaption else { return }
+        if CACurrentMediaTime() - p.at > captionPatience { pendingCaption = nil; log("caption expired: \(p.u.text)"); return }
+        guard inDialogueGap(s), !s.speaker.isSpeaking else { return }
+        pendingCaption = nil
+        guard s.cueGate.admit(p.u) else { return }
+        Task { await s.speaker.speak(p.u) }
+    }
+
+    /// Path and hazard alerts from the vision reading at once; a one-line gist when the scene changed. An alert
+    /// about a hazard the on-device detector already announced is dropped.
     private func handle(reading r: SceneReading, services s: Services, state: AppState) {
         sceneReading = r
         log("vision \(r.path.rawValue)\(r.pathMeters.map { " \($0) m" } ?? ""): \(r.summary)")
-        for u in narration.utterances(for: r, mode: state.mode, now: CACurrentMediaTime(), inConversation: conversationActive(s), moving: s.motion.isMoving()) where s.cueGate.admit(u) {
-            Task { await s.speaker.speak(u) }
+        let now = CACurrentMediaTime()
+        for n in narration.decide(for: r, mode: state.mode, now: now, inConversation: conversationActive(s), moving: s.motion.isMoving()) where s.cueGate.admit(n.utterance) {
+            if let h = n.hazard, !hazards.admit(h, now: now) { log("hazard \(h.kind) already announced: \(n.utterance.text)"); continue }
+            Task { await s.speaker.speak(n.utterance) }
         }
     }
 
@@ -281,7 +331,7 @@ final class AppCoordinator: ObservableObject {
     func whoIsHere() {
         guard let s = services else { return }
         let text = RollCall.phrase(tracks: s.perception.currentTracks())
-        let u = Utterance(text: text, priority: 1, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: true)
+        let u = Utterance(text: text, priority: 1, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: false)
         log("command whoIsHere")
         Task { await s.speaker.speak(u) }
     }

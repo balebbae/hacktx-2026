@@ -157,16 +157,6 @@ final class SelfEnrollTests: XCTestCase {
         XCTAssertNil(coordinator.pendingRoute)
     }
 
-    func testNFCRecordsYieldTheIntroduceURL() {
-        let uri = Data("familiar://introduce".utf8)
-        XCTAssertEqual(NFCTagReader.url(fromRecords: [(0x01, Data("U".utf8), Data([0x00]) + uri)])?.absoluteString, "familiar://introduce")
-        let text = Data([0x02]) + Data("en".utf8) + uri
-        XCTAssertEqual(NFCTagReader.url(fromRecords: [(0x01, Data("T".utf8), text)])?.absoluteString, "familiar://introduce")
-        XCTAssertEqual(NFCTagReader.url(fromRecords: [(0x01, Data("U".utf8), Data([0x04]) + Data("github.com/x".utf8))])?.absoluteString, "https://github.com/x")
-        XCTAssertNil(NFCTagReader.url(fromRecords: [(0x01, Data("T".utf8), Data([0x02]) + Data("enhello".utf8))]))
-        XCTAssertNil(NFCTagReader.url(fromRecords: []))
-    }
-
     func testWordingIsStrangerSafe() {
         let m = makeModel()
         XCTAssertEqual(m.introText, "Priya uses this app to recognize people who agree. Want them to remember you?")

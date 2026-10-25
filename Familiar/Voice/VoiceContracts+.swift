@@ -26,6 +26,21 @@ protocol PCMPlayback: AnyObject {
     func stop()
 }
 
+/// A synthesizer that can hand audio over as it is produced (`ElevenLabsTTS` over the `/stream` endpoint).
+/// `stream` returns nil when the text is cached or streaming is not possible; the plain path is used then.
+protocol StreamingSpeechSynthesizer: SpeechSynthesizer {
+    func stream(_ text: String) -> AsyncThrowingStream<[Float], Error>?
+    var streamSampleRate: Double { get }
+}
+
+/// Playback that schedules chunks as they arrive, so the first word plays before the last is synthesized.
+protocol StreamingPCMPlayback: PCMPlayback {
+    /// `prefix` (lead-in silence, earcon) plays before the first chunk; every sample is scaled by `gain`. Returns the
+    /// host-clock window of what played, nil if stopped before any sample played. A stream error ends playback with
+    /// what has played so far.
+    func playStream(_ chunks: AsyncThrowingStream<[Float], Error>, sampleRate: Double, prefix: [Float], gain: Float, audience: Audience) async -> ClosedRange<TimeInterval>?
+}
+
 /// S7: `Utterance` (Core, frozen) carries no volume, so the speaker looks the gain up by category / dedupeKey.
 /// "Marcus." for a person who just started talking is whispered at −6 dB; everything else plays at unity.
 enum SpeakerVolumeHint {
@@ -41,7 +56,7 @@ enum SpeakerVolumeHint {
 }
 
 /// Tries `primary` and falls back to `fallback` on any error (including the 3 s first-byte timeout).
-final class FallbackSynthesizer: SpeechSynthesizer {
+final class FallbackSynthesizer: SpeechSynthesizer, StreamingSpeechSynthesizer {
     let primary: SpeechSynthesizer
     let fallback: SpeechSynthesizer
     var onFallback: ((String, Error) -> Void)?
@@ -54,10 +69,19 @@ final class FallbackSynthesizer: SpeechSynthesizer {
 
     func synthesize(_ text: String) async throws -> SynthesizedAudio {
         do { return try await primary.synthesize(text) } catch {
-            onFallback?(text, error)
-            return try await fallback.synthesize(text)
+            return try await synthesizeAfterPrimaryFailed(text, error: error)
         }
     }
+
+    /// The primary already failed (a stream that never started): straight to the fallback voice, no second try.
+    func synthesizeAfterPrimaryFailed(_ text: String, error: Error) async throws -> SynthesizedAudio {
+        onFallback?(text, error)
+        return try await fallback.synthesize(text)
+    }
+
+    /// Streams from the primary when it can; nil otherwise.
+    func stream(_ text: String) -> AsyncThrowingStream<[Float], Error>? { (primary as? StreamingSpeechSynthesizer)?.stream(text) }
+    var streamSampleRate: Double { (primary as? StreamingSpeechSynthesizer)?.streamSampleRate ?? 16_000 }
 }
 
 /// Counting semaphore for structured concurrency (ElevenLabs allows us 2 requests in flight).
@@ -157,6 +181,13 @@ extension Phrasebook {
         out += fixedPhrases
         var seen = Set<String>()
         return out.filter { seen.insert($0).inserted }
+    }
+
+    /// Everything worth having in the cache before the demo, safety first: alerts, close crossings, then the people
+    /// vocabulary for `names`. Deduplicated, in priority order.
+    static func demoVocabulary(names: [String]) -> [String] {
+        var seen = Set<String>()
+        return (alertPhrases + actionAlertPhrases + prewarmSet(names: names)).filter { seen.insert($0).inserted }
     }
 
     /// Phrases that do not depend on a name.

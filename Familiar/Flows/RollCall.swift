@@ -17,6 +17,6 @@ enum RollCall {
     }
 
     static func utterance(tracks: [TrackSnapshot]) -> Utterance {
-        Utterance(text: phrase(tracks: tracks), priority: 0, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: true)
+        Utterance(text: phrase(tracks: tracks), priority: 0, category: "rollcall", personID: nil, dedupeKey: "rollcall", audience: .user, earcon: false)
     }
 }

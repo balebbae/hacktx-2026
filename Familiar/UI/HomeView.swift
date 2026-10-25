@@ -10,7 +10,6 @@ struct HomeView: View {
     @EnvironmentObject var runtime: FlowRuntime
     @Environment(\.openReadiness) private var openReadiness
     @Environment(\.openIntroduce) private var openIntroduce
-    @StateObject private var nfc = NFCTagReader()
     @Environment(\.visionScale) private var scale
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage(YouSettings.mimoPresence) private var mimoPresence = MimoPresence.full.rawValue
@@ -161,20 +160,7 @@ struct HomeView: View {
     }
 
     /// Hands the phone to the other person: they read, look at the camera and tap YES themselves.
-    private var introduceRow: some View {
-        VStack(spacing: 8) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { introduceButton; scanTagButton }
-                VStack(spacing: 12) { introduceButton; scanTagButton }
-            }
-            if let status = nfc.status {
-                Text(status)
-                    .font(FamiliarType.micro(scale))
-                    .foregroundStyle(FamiliarPalette.inkSecondary(scale))
-                    .accessibilityLabel("Tag: \(status)")
-            }
-        }
-    }
+    private var introduceRow: some View { introduceButton }
 
     private var introduceButton: some View {
         Button { openIntroduce() } label: {
@@ -183,17 +169,6 @@ struct HomeView: View {
         .buttonStyle(GhostPillStyle())
         .disabled(coordinator.services == nil)
         .accessibilityHint("Hand the phone to the other person so they can add themselves with their own tap")
-    }
-
-    @ViewBuilder private var scanTagButton: some View {
-        if NFCTagReader.isAvailable {
-            Button { nfc.scan { url in coordinator.handle(url: url) } } label: {
-                Label("Scan tag", systemImage: "wave.3.right.circle")
-            }
-            .buttonStyle(GhostPillStyle())
-            .disabled(nfc.isScanning)
-            .accessibilityHint("Hold the phone near an NFC tag that opens the introduce screen")
-        }
     }
 
     /// The one liquid-metal control on the screen: a chromatic ring that bends with the phone's tilt.

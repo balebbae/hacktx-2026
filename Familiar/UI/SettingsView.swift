@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage(SpeechPreferences.speakingCueKey) private var cueSpeaking = true
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
     @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
+    @AppStorage(UserSettings.streamingTTS) private var streamingTTS = true
     @State private var calibrating = false
     @State private var calibration: String?
 
@@ -70,6 +71,10 @@ struct SettingsView: View {
             YouChoiceRow(title: "Voice", detail: "Which voice speaks the cues. ElevenLabs falls back to the Apple voice when slow") {
                 SlidingPillSegment(options: Self.voiceOptions, selection: $voiceProvider, label: "Voice")
             }
+            YouDivider(inset: YouMetrics.plainInset)
+            YouToggleRow(title: "Stream speech (faster)", detail: "Plays each answer as it is synthesized. Turn off if speech stutters",
+                         isOn: $streamingTTS, hint: "Plays each answer as it is synthesized instead of waiting for the whole clip")
+                .onChange(of: streamingTTS) { _, on in (coordinator.services?.speaker as? VoiceSpeaker)?.streaming = on }
             YouDivider(inset: YouMetrics.plainInset)
             YouChoiceRow(title: "Audio route", detail: "Where the microphone and speaker are. Glasses HFP stops the glasses camera") {
                 audioRoutePicker

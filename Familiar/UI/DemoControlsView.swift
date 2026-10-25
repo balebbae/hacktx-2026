@@ -88,17 +88,17 @@ struct DemoControlsView: View {
 
     /// The stranger enrolls themselves on this phone; the tag only opens the screen, their own YES saves.
     private var introduceSection: some View {
-        YouSection(title: "Introduce yourself", footer: "An NFC tag with familiar://introduce opens the same screen.") {
+        YouSection(title: "Introduce yourself", footer: "A link to familiar://introduce opens the same screen.") {
             YouToggleRow(title: "Use the enroll_marcus clip",
                          detail: "Instead of the front camera. On in the Simulator, which has no camera",
                          systemImage: "film",
                          isOn: $selfEnrollUseFixture,
                          hint: "On in the Simulator, which has no camera")
             YouDivider()
-            YouActionRow(title: "Simulate the NFC tag",
+            YouActionRow(title: "Open familiar://introduce",
                          systemImage: "wave.3.right.circle",
                          detail: "familiar://introduce",
-                         hint: "Opens the introduce screen the way a tag would") {
+                         hint: "Opens the introduce screen the way a link would") {
                 coordinator.handle(url: URL(string: "familiar://introduce")!)
             }
         }

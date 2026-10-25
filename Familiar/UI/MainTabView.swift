@@ -197,7 +197,7 @@ struct MainTabView: View {
 
     // MARK: - Actions
 
-    /// The other person enrolls themselves on this phone. Opened by the Today button, an NFC tag or familiar://introduce.
+    /// The other person enrolls themselves on this phone. Opened by the Today button or familiar://introduce.
     private func introduce() {
         guard selfEnroll == nil, let s = coordinator.services else { return }
         if runtime.showsConsentCard { runtime.cancelConsent() }
