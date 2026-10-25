@@ -6,9 +6,11 @@ The glasses are the camera, mic and speaker. The iPhone does all the thinking. F
 
 Only people who said yes are ever recognized. Everyone else is "a person" or "someone", and every face is blacked out on the phone before an image goes anywhere.
 
-![Familiar system overview](docs/diagrams/architecture.png)
+![Familiar at a glance](docs/diagrams/overview.png)
 
 ## Architecture
+
+![Familiar system overview](docs/diagrams/architecture.png)
 
 Familiar is one SwiftUI app with no backend. Everything personal (faces, embeddings, consent clips, contacts) stays on the phone. The cloud only sees redacted frames and short text.
 

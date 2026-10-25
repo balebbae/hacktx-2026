@@ -9,7 +9,7 @@ The big picture (on `main`)
 - One SwiftUI app on the iPhone, no backend. The Ray-Ban Meta Gen 2 glasses are only camera, mic and speaker. Why: the phone has the compute, and nothing personal needs a server.
 - Glasses video comes in through the Meta Wearables DAT SDK. The phone camera and recorded fixture videos plug into the same `FrameSource` interface, so the whole app runs in the Simulator with no hardware.
 - Every module talks through `AsyncStream` subscriptions and shared contracts in `Familiar/Core/Contracts.swift`. Why: nine people built modules in parallel without stepping on each other.
-- See [architecture](diagrams/architecture.png), [pipeline](diagrams/pipeline.png), [Poyo](diagrams/poyo.png) and [consent](diagrams/consent.png).
+- Start with [the one-page overview](diagrams/overview.png). Then see [architecture](diagrams/architecture.png), [pipeline](diagrams/pipeline.png), [Poyo](diagrams/poyo.png) and [consent](diagrams/consent.png).
 
 Recognizing people (on `main`)
 
