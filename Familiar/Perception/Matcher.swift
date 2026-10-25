@@ -106,7 +106,9 @@ struct IdentityVotes: Equatable {
             } else {
                 count -= 1
             }
-        } else if !locked {
+        } else if !locked || r.bestScore < config.threshold - 0.1 {
+            // Unlocked: any miss decays the candidate. Locked: only clear misses decay it, so a known person
+            // glancing away keeps their name while a track swapped onto a stranger loses it within a few embeds.
             count = max(0, count - 1)
         }
         if count < 1 { candidateID = nil; candidateName = nil; locked = false; lastScore = nil }

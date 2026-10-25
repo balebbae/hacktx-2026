@@ -16,6 +16,8 @@ struct FaceLandmarks5: Equatable {
 }
 
 /// One detected face in one frame. Box is normalized with a top-left origin in the *upright* image.
+enum LandmarkSource: Equatable { case vision, box }
+
 struct FaceDetection: Equatable {
     var box: CGRect
     var confidence: Float
@@ -23,6 +25,9 @@ struct FaceDetection: Equatable {
     var rollDegrees: Double?
     var pitchDegrees: Double?
     var landmarks: FaceLandmarks5?
+    /// `.vision` when the five points came from VNDetectFaceLandmarksRequest and passed the plausibility check,
+    /// `.box` when they were synthesized from the face rectangle + roll (Vision landmarks are unreliable in the Simulator).
+    var landmarkSource: LandmarkSource = .box
     /// Inner-lip vertical gap divided by face height (nil without landmarks).
     var mouthOpenness: Double?
 }
@@ -60,7 +65,7 @@ final class FakeEmbedder: EmbeddingProvider, @unchecked Sendable {
     var latency: TimeInterval = 0
     private(set) var calls = 0
 
-    init(label: String = "person", modelID: String = "fake", dimension: Int = 512) {
+    init(label: String = "person", modelID: String = "w600k_mbf", dimension: Int = 512) {
         self.label = label; self.modelID = modelID; self.dimension = dimension
     }
 

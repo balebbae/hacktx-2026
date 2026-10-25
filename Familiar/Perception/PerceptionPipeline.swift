@@ -79,6 +79,9 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
 
     func start(frames: FrameSource, gallery: GalleryProvider) async throws {
         guard loop == nil else { return }
+        tracker.removeAll()
+        lock.withLock { s in s.snapshots = []; s.unknownCount = 0; s.processed = 0; s.lastProcessedAt = -.infinity }
+        matchLogLock.withLock { _ in matchLog.removeAll() }
         self.gallery = gallery
         self.frameSource = frames
         lock.withLock { $0.running = true }
@@ -93,9 +96,8 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
 
     func stop() {
         loop?.cancel(); loop = nil
-        lock.withLock { s in s.running = false; s.snapshots = []; s.unknownCount = 0 }
-        tracker.removeAll()
-        bus.finishAll()
+        lock.withLock { $0.running = false }
+        bus.finishAll()   // tracks and snapshots stay readable until the next start() (consent flow reads them after stop)
     }
 
     func currentTracks() -> [TrackSnapshot] { lock.withLock { $0.snapshots } }
@@ -171,7 +173,8 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
             guard let vector = try? await embedder.embed(aligned.buffer) else { continue }
             let embedMs = (CACurrentMediaTime() - t0) * 1000
             embedsThisFrame += 1
-            let quality = Self.quality(heightPx: Double(t.box.height) * Double(result.uprightSize.height), yaw: t.yawDegrees, confidence: t.detection.confidence)
+            var quality = Self.quality(heightPx: Double(t.box.height) * Double(result.uprightSize.height), yaw: t.yawDegrees, confidence: t.detection.confidence)
+            if t.detection.landmarkSource == .box { quality *= 0.9 }
             let thumb = t.embeddings.count < tracker.config.maxEmbeddings || quality > (t.embeddings.map(\.embedding.quality).min() ?? 0)
                 ? aligner.thumbnail(frame.pixelBuffer, orientation: frame.orientation, box: t.box) : nil
             let emb = FaceEmbedding(modelID: embedder.modelID, vector: vector, quality: quality, timestamp: now, thumbnailJPEG: thumb)
@@ -197,8 +200,10 @@ final class PerceptionPipeline: Perception, @unchecked Sendable {
                 let snap = snapshot(for: t, frame: frame, upright: result.uprightSize, now: now)
                 t.lastSnapshot = snap
                 snaps.append(snap)
-                let verdicts = Trajectory.evaluate(history: t.history, state: &t.trajectory, config: trajectory)
+                // Only evaluate once the name is locked; otherwise an approach that happened while the face was still
+                // "someone" would be consumed silently and never spoken.
                 guard t.isKnown else { continue }
+                let verdicts = Trajectory.evaluate(history: t.history, state: &t.trajectory, config: trajectory)
                 for v in verdicts {
                     switch v {
                     case .approaching: events.append(.knownApproaching(snap))

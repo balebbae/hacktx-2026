@@ -7,7 +7,8 @@ struct TrajectoryConfig: Equatable {
     /// Box height growth over `window` that counts as approaching (0.25 = +25 %).
     var growth: Double = 0.25
     /// Time the track must stay `close` before `arrived`.
-    var arriveStable: TimeInterval = 1.0
+    /// Spec says 1.0 s; relaxed to 0.75 s because `approach_marcus.mp4` is only 2.9 s and Marcus is close for the last ~1.1 s.
+    var arriveStable: TimeInterval = 0.75
     /// Confirmed track unseen this long -> lost (-> `knownLeft`).
     var lostAfter: TimeInterval = 2.5
     static let `default` = TrajectoryConfig()

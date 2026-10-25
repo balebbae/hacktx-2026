@@ -78,9 +78,16 @@ final class FaceDetector: @unchecked Sendable {
             if let obs = withLandmarks.max(by: { FaceTracker.iou($0.boundingBox, bb) < FaceTracker.iou($1.boundingBox, bb) }),
                FaceTracker.iou(obs.boundingBox, bb) > 0.5, let l = obs.landmarks {
                 let (five, mouth) = Self.fivePoints(l, boundingBox: obs.boundingBox, upright: upright)
-                d.landmarks = five
-                d.mouthOpenness = mouth
+                if let five, Self.plausible(five, box: box, upright: upright) {
+                    d.landmarks = five
+                    d.landmarkSource = .vision
+                    d.mouthOpenness = mouth
+                }
                 if d.yawDegrees == nil, let y = obs.yaw { d.yawDegrees = y.doubleValue * deg }
+            }
+            if d.landmarks == nil {
+                d.landmarks = Self.boxLandmarks(box: box, upright: upright, rollDegrees: d.rollDegrees ?? 0)
+                d.landmarkSource = .box
             }
             out.append(d)
         }
@@ -112,6 +119,36 @@ final class FaceDetector: @unchecked Sendable {
         let mL = lipPts.min { $0.x < $1.x }!, mR = lipPts.max { $0.x < $1.x }!
         let (le, re) = e1.x <= e2.x ? (e1, e2) : (e2, e1)
         return (FaceLandmarks5(leftEye: le, rightEye: re, nose: nose, mouthLeft: mL, mouthRight: mR), mouth)
+    }
+
+    /// Vision's landmark network returns nonsense in the iOS Simulator (eyes 5 px apart, points outside the frame),
+    /// so every five-point set is sanity-checked against the face rectangle before it is trusted.
+    static func plausible(_ l: FaceLandmarks5, box: CGRect, upright: CGSize) -> Bool {
+        let bw = Double(box.width * upright.width), bh = Double(box.height * upright.height)
+        guard bw > 0, bh > 0 else { return false }
+        let eyeDist = hypot(Double(l.rightEye.x - l.leftEye.x), Double(l.rightEye.y - l.leftEye.y))
+        guard eyeDist >= 0.25 * bw, eyeDist <= 0.65 * bw else { return false }
+        let mouthW = hypot(Double(l.mouthRight.x - l.mouthLeft.x), Double(l.mouthRight.y - l.mouthLeft.y))
+        guard mouthW >= 0.15 * bw, mouthW <= 0.70 * bw else { return false }
+        let eyeY = Double(l.leftEye.y + l.rightEye.y) / 2, mouthY = Double(l.mouthLeft.y + l.mouthRight.y) / 2
+        guard Double(l.nose.y) > eyeY, mouthY > Double(l.nose.y) else { return false }
+        let roll = abs(atan2(Double(l.rightEye.y - l.leftEye.y), Double(l.rightEye.x - l.leftEye.x))) * 180 / .pi
+        guard roll < 40 else { return false }
+        let grown = CGRect(x: box.minX * upright.width - 0.3 * bw, y: box.minY * upright.height - 0.3 * bh, width: bw * 1.6, height: bh * 1.6)
+        return l.points.allSatisfy { grown.contains($0) }
+    }
+
+    /// Canonical five points for a Vision face rectangle (brows-to-chin box), measured against InsightFace keypoints
+    /// on the enrollment clip: eyes at 30 % / 70 % of the width, 31 % down; nose 60 % down; mouth corners 35 % / 65 %, 88 % down.
+    static func boxLandmarks(box: CGRect, upright: CGSize, rollDegrees: Double) -> FaceLandmarks5 {
+        let bw = box.width * upright.width, bh = box.height * upright.height
+        let cx = box.midX * upright.width, cy = box.midY * upright.height
+        let th = rollDegrees * .pi / 180, c = CGFloat(cos(th)), s = CGFloat(sin(th))
+        func p(_ fx: CGFloat, _ fy: CGFloat) -> CGPoint {
+            let dx = (fx - 0.5) * bw, dy = (fy - 0.5) * bh
+            return CGPoint(x: cx + dx * c + dy * s, y: cy - dx * s + dy * c)
+        }
+        return FaceLandmarks5(leftEye: p(0.30, 0.31), rightEye: p(0.70, 0.31), nose: p(0.50, 0.60), mouthLeft: p(0.35, 0.88), mouthRight: p(0.65, 0.88))
     }
 
     private func downscaled(_ pb: CVPixelBuffer, uprightWidth: CGFloat) -> CVPixelBuffer? {
