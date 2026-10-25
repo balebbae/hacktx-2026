@@ -7,11 +7,12 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F659A13EEBDC31C271DAE8C4 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = C28C4C27ED14F37B9411CA27 /* onnxruntime */; };
+		4A0A83E1308DE74700BAB4AF /* ElevenLabs in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E60718293A4B05 /* ElevenLabs */; };
 		B1B2C3D4E5F60718293A4B01 /* MWDATCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B01 /* MWDATCore */; };
 		B1B2C3D4E5F60718293A4B02 /* MWDATCamera in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B02 /* MWDATCamera */; };
 		B1B2C3D4E5F60718293A4B03 /* MWDATMockDevice in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B03 /* MWDATMockDevice */; };
 		B1B2C3D4E5F60718293A4B04 /* MWDATInputs in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D4E5F60718293A4B04 /* MWDATInputs */; };
+		F659A13EEBDC31C271DAE8C4 /* onnxruntime in Frameworks */ = {isa = PBXBuildFile; productRef = C28C4C27ED14F37B9411CA27 /* onnxruntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,13 +26,13 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		206921FA0F7370D6772196A6 /* Familiar.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Familiar.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		9829E8ADE49E75E895FB72A1 /* FamiliarTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FamiliarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		206921FA0F7370D6772196A6 /* Familiar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Familiar.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9829E8ADE49E75E895FB72A1 /* FamiliarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamiliarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		"TEMP_2878E2EE-5C5F-4958-A277-868585C3ED9A" /* Secrets.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Secrets.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		6845953AF0A878A50002687C /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		6845953AF0A878A50002687C /* Exceptions for "Familiar" folder in "Familiar" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -44,21 +45,13 @@
 		759630C09CB7D919C3222258 /* Familiar */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				6845953AF0A878A50002687C /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
+				6845953AF0A878A50002687C /* Exceptions for "Familiar" folder in "Familiar" target */,
 			);
 			path = Familiar;
 			sourceTree = "<group>";
 		};
 		BB088880ED67BA5C0CD5E9EB /* FamiliarTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
 			path = FamiliarTests;
 			sourceTree = "<group>";
 		};
@@ -69,6 +62,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A0A83E1308DE74700BAB4AF /* ElevenLabs in Frameworks */,
 				F659A13EEBDC31C271DAE8C4 /* onnxruntime in Frameworks */,
 				B1B2C3D4E5F60718293A4B01 /* MWDATCore in Frameworks */,
 				B1B2C3D4E5F60718293A4B02 /* MWDATCamera in Frameworks */,
@@ -86,7 +80,16 @@
 				759630C09CB7D919C3222258 /* Familiar */,
 				BB088880ED67BA5C0CD5E9EB /* FamiliarTests */,
 				C8FA5AF39B14B1F1DBC424DF /* Products */,
+				4A0A83E2308DE74700BAB4AF /* Recovered References */,
 			);
+			sourceTree = "<group>";
+		};
+		4A0A83E2308DE74700BAB4AF /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_2878E2EE-5C5F-4958-A277-868585C3ED9A" /* Secrets.xcconfig */,
+			);
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 		C8FA5AF39B14B1F1DBC424DF /* Products */ = {
@@ -96,14 +99,6 @@
 				9829E8ADE49E75E895FB72A1 /* FamiliarTests.xctest */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		"TEMP_161608B0-0AFB-4E41-B711-3492A9BAFEEA" /* hacktx-2026 */ = {
-			isa = PBXGroup;
-			children = (
-				"TEMP_2878E2EE-5C5F-4958-A277-868585C3ED9A" /* Secrets.xcconfig */,
-			);
-			path = "hacktx-2026";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -525,11 +520,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C28C4C27ED14F37B9411CA27 /* onnxruntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 274A53CAE3C52ACB43366862 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
-			productName = onnxruntime;
-		};
 		A1B2C3D4E5F60718293A4B01 /* MWDATCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
@@ -549,6 +539,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5D6A7B8C9D0E1F2A3B4C5D6E /* XCRemoteSwiftPackageReference "meta-wearables-dat-ios" */;
 			productName = MWDATInputs;
+		};
+		C28C4C27ED14F37B9411CA27 /* onnxruntime */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 274A53CAE3C52ACB43366862 /* XCRemoteSwiftPackageReference "onnxruntime-swift-package-manager" */;
+			productName = onnxruntime;
 		};
 		E1E2E3E4E5E60718293A4B05 /* ElevenLabs */ = {
 			isa = XCSwiftPackageProductDependency;

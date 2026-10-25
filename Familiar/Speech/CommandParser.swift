@@ -37,11 +37,15 @@ enum CommandParser {
             switch m[1] { case "quiet": return .setMode(.quiet); case "chatty": return .setMode(.chatty); default: return .setMode(.normal) }
         }
 
+        // Before who's-here: "remember who is in front of me" must not become a roll call. Natural phrasings
+        // ("remember the person in front of me", "save their contact") would otherwise fall through to the agent,
+        // which refuses while the glasses stream.
+        if match("\\b(remember|save|add|memorize) (?:(?:the|this|that|my|our) )?(?:new )?(them|him|her|person|people|one|guy|girl|lady|man|woman|friend|face)\\b", in: s) != nil
+            || match("\\b(remember|save|add) (their|his|her) (face|contact|number|name)\\b", in: s) != nil
+            || match("\\bremember (who|whoever) (is|that is|this is|'?s) (here|there|in front of me)\\b", in: s) != nil { return .rememberThem }
+
         if match("\\b(who'?s|who is|whos) (here|around|there|near ?by|with me|in front of me)\\b", in: s) != nil
             || match("\\b(anyone|anybody|who do you see|who can you see|who's that|who is that)\\b", in: s) != nil { return .whoIsHere }
-
-        if match("\\b(remember|save|add) (them|him|her|this person|that person|this one|this guy|this girl|this lady|this man|this woman)\\b", in: s) != nil
-            || match("\\bremember (their|his|her) face\\b", in: s) != nil { return .rememberThem }
 
         if match("\\b(say that again|say again|repeat that|repeat|come again|what did you say|one more time|again)\\b", in: s) != nil { return .repeatLast }
 

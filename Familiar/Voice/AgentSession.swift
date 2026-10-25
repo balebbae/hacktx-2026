@@ -48,8 +48,8 @@ protocol AgentAudioControl: AnyObject {
 }
 
 extension AudioEngineController: AgentAudioControl {
-    func pauseForAgent() { stopEngine() }
-    func resumeAfterAgent() throws { try setRoute(.phoneMicGlassesA2DP) }
+    func pauseForAgent() { suspendedForAgent = true; stopEngine() }
+    func resumeAfterAgent() throws { suspendedForAgent = false; try setRoute(.phoneMicGlassesA2DP) }
 }
 
 extension Phrasebook {

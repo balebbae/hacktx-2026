@@ -69,6 +69,12 @@ struct HomeView: View {
                     .accessibilityLabel("Video source")
                     .accessibilityHint("Phone camera, glasses, or a bundled test clip")
                     .onChange(of: state.source) { _, new in Task { await coordinator.restart(source: new) } }
+                    NavigationLink {
+                        // Share the live source: the glasses accept one DAT session at a time.
+                        GlassesRegistrationView(source: coordinator.services?.frameSource as? GlassesFrameSource)
+                            .onDisappear { coordinator.ensureGlasses() }
+                    } label: { Label("Connect glasses", systemImage: "eyeglasses") }
+                        .accessibilityHint("Approve this app in Meta AI and allow the glasses camera")
                 }
                 Section {
                     NavigationLink { JudgeView().environmentObject(runtime) } label: { Label("Judge view", systemImage: "eye") }

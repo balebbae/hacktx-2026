@@ -22,6 +22,8 @@ final class CommandRouter: ObservableObject {
     @Published private(set) var lastSeen: [UUID: LastSeen] = [:]
     @Published private(set) var handled: [Command] = []
     var goodbyeCooldown: TimeInterval = 60
+    var conversationCooldown: TimeInterval = 180
+    private var lastConversationOfferAt: TimeInterval = -.infinity
 
     init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCallSkeleton.phrase, clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
         self.perception = perception; self.speaker = speaker; self.cueGate = cueGate; self.consentFlow = consentFlow
@@ -129,6 +131,18 @@ final class CommandRouter: ObservableObject {
         guard !consentActive, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
         let strangerClose = perception.currentTracks().contains { !$0.identity.isKnown && $0.distance == .close }
         guard strangerClose else { return }
+        lastGoodbyeFlowAt = t
+        Task { await consentFlow.begin(confirmFirst: true) }
+    }
+
+    /// A sustained conversation with a stranger in view → offer to remember them. Same user-first confirmation as
+    /// goodbyes, but any non-far stranger counts (people talk at arm's length or across a table) and a longer
+    /// cooldown, so a "no" is not re-asked every minute of the same chat.
+    func conversationDetected(at t: TimeInterval) async {
+        guard !consentActive, t - lastConversationOfferAt >= conversationCooldown, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
+        let strangerNear = perception.currentTracks().contains { !$0.identity.isKnown && $0.distance != .far }
+        guard strangerNear else { return }
+        lastConversationOfferAt = t
         lastGoodbyeFlowAt = t
         Task { await consentFlow.begin(confirmFirst: true) }
     }

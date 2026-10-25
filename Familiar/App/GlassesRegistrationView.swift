@@ -6,6 +6,7 @@ import SwiftUI
 /// live preview. S5 links it from Settings; `--glasses` launch argument opens it at start.
 struct GlassesRegistrationView: View {
     @StateObject private var model: GlassesRegistrationModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init(source: GlassesFrameSource? = nil) {
         _model = StateObject(wrappedValue: GlassesRegistrationModel(source: source))
@@ -33,7 +34,10 @@ struct GlassesRegistrationView: View {
             Section("Camera") {
                 LabeledContent("Permission", value: model.permissionLabel)
                     .accessibilityLabel("Glasses camera permission: \(model.permissionLabel)")
-                if model.registration == .registered && model.permissionLabel != "Granted" {
+                if model.registration == .registered && model.permissionLabel == GlassesRegistrationModel.glassesNotLinked {
+                    Text("Unfold the glasses and keep them near the phone. The Meta AI app must show them as connected.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                } else if model.registration == .registered && model.permissionLabel != "Granted" {
                     Button("Allow glasses camera") { model.requestCameraPermission() }
                         .accessibilityHint("Asks the Meta AI app for camera access")
                 }
@@ -83,6 +87,8 @@ struct GlassesRegistrationView: View {
         }
         .navigationTitle("Glasses")
         .task { await model.observe() }
+        // Back from the Meta AI app after "Allow" / "Always allow": re-read instead of showing the stale answer.
+        .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await model.refreshPermission() } } }
         #if DEBUG
         .task {
             // `--glasses-mock` pairs the mock and streams immediately (Simulator demos, screenshots).
@@ -169,6 +175,7 @@ final class GlassesRegistrationModel: ObservableObject {
     private func observeStatus() async {
         for await s in source.statusChanges() {
             status = s
+            if s == .streaming { permissionLabel = "Granted" }
             if s == .streaming, let startedAt, firstFrameDelay == nil {
                 firstFrameDelay = CACurrentMediaTime() - startedAt
             }
@@ -189,16 +196,22 @@ final class GlassesRegistrationModel: ObservableObject {
         }
     }
 
-    private func refreshPermission() async {
+    /// The SDK only answers while a pair of glasses is linked ("if all devices disconnect, permissions become
+    /// unavailable"), so a link drop must not wipe an earlier "Granted" and bring the Allow button back.
+    func refreshPermission() async {
         guard GlassesSDK.isConfigured else { permissionLabel = "Unavailable"; return }
         guard registration == .registered else { permissionLabel = "Connect first"; return }
+        if status == .streaming { permissionLabel = "Granted"; return }
         do {
             let s = try await Wearables.shared.checkPermissionStatus(.camera)
             permissionLabel = s == .granted ? "Granted" : "Not granted"
         } catch {
-            permissionLabel = "Unknown"
+            if permissionLabel != "Granted" { permissionLabel = Self.glassesNotLinked }
+            glassesLog.info("permission check: \(String(describing: error))")
         }
     }
+
+    static let glassesNotLinked = "Glasses not linked"
 
     func connect() {
         guard GlassesSDK.isConfigured else { message = GlassesSDK.unavailableReason; return }

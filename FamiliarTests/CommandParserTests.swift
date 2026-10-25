@@ -6,6 +6,7 @@ final class CommandParserTests: XCTestCase {
         let cases: [(String, Command)] = [
             ("who's here", .whoIsHere), ("Who is around?", .whoIsHere), ("who is with me", .whoIsHere), ("anyone there", .whoIsHere), ("who do you see", .whoIsHere), ("Whos nearby", .whoIsHere),
             ("remember them", .rememberThem), ("remember him", .rememberThem), ("save her", .rememberThem), ("Remember this person.", .rememberThem), ("remember their face", .rememberThem), ("add this guy", .rememberThem),
+            ("remember the person in front of me", .rememberThem), ("save their contact", .rememberThem), ("add my new friend", .rememberThem), ("remember who is in front of me", .rememberThem),
             ("quiet mode", .setMode(.quiet)), ("go quiet", .setMode(.quiet)), ("normal mode", .setMode(.normal)), ("switch to normal", .setMode(.normal)), ("Chatty mode please", .setMode(.chatty)), ("be chatty", .setMode(.chatty)),
             ("mute", .mute), ("stop talking", .mute), ("be quiet", .mute), ("hush", .mute),
             ("unmute", .unmute), ("talk again", .unmute), ("un mute", .unmute),

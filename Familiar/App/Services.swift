@@ -57,6 +57,8 @@ final class Services: ObservableObject {
         self.source = source; self.frameSource = frameSource; self.perception = perception; self.audioInput = audioInput; self.transcriber = transcriber; self.speaker = speaker; self.cuePolicy = cuePolicy; self.cueGate = cueGate; self.peopleStore = peopleStore; self.contacts = contacts; self.nameExtractor = nameExtractor; self.yesNo = yesNo; self.consentFlow = consentFlow; self.commandSources = commandSources
     }
 
+    private static var sharedEngine: AudioEngineController?
+
     /// Real perception (S2), audio/voice/speech (S3) and glasses (S6). The consent flow, router and JSON people store
     /// are built by `FlowRuntime` (S4) on top of these, which is why `consentFlow`/`peopleStore` stay as stand-ins here.
     static func make(source: Source, state: AppState) -> Services {
@@ -73,9 +75,23 @@ final class Services: ObservableObject {
 
         let useScripted = defaults.bool(forKey: "useScriptedPerception")
         let threshold = defaults.object(forKey: UserSettings.matchThreshold) as? Float ?? 0.40
-        let perception: Perception = useScripted ? ScriptedPerception() : PerceptionFactory.make(embedder: PerceptionFactory.defaultEmbedder(), threshold: threshold)
+        let embedder = PerceptionFactory.defaultEmbedder()
+        let perception: Perception = useScripted ? ScriptedPerception() : PerceptionFactory.make(embedder: embedder, threshold: threshold)
+        // The store perception matches against must be the one consent saves into, filtered to this embedder's
+        // model id; FlowRuntime picks this same instance up.
+        let peopleStore = JSONPeopleStore(paths: .documents, modelID: useScripted ? "fake" : embedder.modelID, contacts: CNContactsBridge())
 
-        let engine = AudioFactory.makeEngine(route: AudioRoute(storageKey: defaults.string(forKey: UserSettings.audioRoute)) ?? .phoneMicGlassesA2DP)
+        // One engine for the life of the app: it owns the AVAudioSession, and re-applying the session on every
+        // source switch re-routes Bluetooth audio on the glasses.
+        let route = AudioRoute(storageKey: defaults.string(forKey: UserSettings.audioRoute)) ?? .phoneMicGlassesA2DP
+        let engine: AudioEngineController
+        if let shared = sharedEngine {
+            engine = shared
+            if shared.route != route { do { try shared.setRoute(route) } catch { NSLog("[Services] audio route switch failed: %@", "\(error)") } }
+        } else {
+            engine = AudioFactory.makeEngine(route: route)
+            sharedEngine = engine
+        }
         do { try engine.start() } catch { NSLog("[Services] audio engine start failed: %@", "\(error)") }
         if let glasses = frameSource as? GlassesStreamCoordinator {
             Task.detached { [weak engine] in for await active in glasses.streamingChanges() { engine?.glassesStreamActive = active } }
@@ -106,7 +122,7 @@ final class Services: ObservableObject {
         #endif
         let commands: [CommandSource] = [SpeechFactory.makeCommandSource(transcriber: transcriber)]
 
-        let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: InMemoryPeopleStore(), contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
+        let services = Services(source: source, frameSource: frameSource, perception: perception, audioInput: engine.rawInput, transcriber: transcriber, speaker: speaker, cuePolicy: VoiceFactory.makeCuePolicy(), cueGate: CueGate(), peopleStore: peopleStore, contacts: NoopContactsBridge(), nameExtractor: NoopNameExtractor(), yesNo: RulesYesNo(), consentFlow: StubConsentFlow(), commandSources: commands)
         // S8
         services.agentAudio = engine
         services.isGlassesStreaming = { [weak engine] in engine?.glassesStreamActive ?? false }

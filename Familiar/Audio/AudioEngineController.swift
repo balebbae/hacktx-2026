@@ -16,6 +16,9 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     /// Set by S6 while the glasses stream their mic; Route B is then refused.
     var glassesStreamActive = false
     var speakingTail: TimeInterval = 0.3
+    /// True while the ElevenLabs agent owns the mic (S8). Its WebRTC stack re-routes the session (16 kHz voice
+    /// chat); restarting our engine then would fight it for the input node.
+    var suspendedForAgent = false
     var isRunning: Bool { engine.isRunning }
     var lastError: String?
 
@@ -117,8 +120,17 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     private func installTap() {
         removeTap()
         let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0, let chunker = AudioChunker(inputFormat: format) else {
+        // After a route change the node's cached output format can lag the hardware (48 kHz vs 16 kHz HFP), and
+        // installTap with a mismatched rate raises an ObjC exception that kills the app. Always tap at the hw rate.
+        let hardware = input.inputFormat(forBus: 0)
+        let cached = input.outputFormat(forBus: 0)
+        guard hardware.sampleRate > 0, cached.channelCount > 0 else {
+            lastError = "no usable input format"
+            return
+        }
+        let format = cached.sampleRate == hardware.sampleRate ? cached
+            : AVAudioFormat(standardFormatWithSampleRate: hardware.sampleRate, channels: cached.channelCount) ?? hardware
+        guard let chunker = AudioChunker(inputFormat: format) else {
             lastError = "no usable input format"
             return
         }
@@ -144,7 +156,9 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
         observers.append(nc.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] note in
             let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt).flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
             switch reason {
-            case .newDeviceAvailable, .oldDeviceUnavailable, .override, .categoryChange, .routeConfigurationChange: self?.rebuild(reason: "route change \(reason.map { String($0.rawValue) } ?? "?")")
+            // Not `.override`: that is our own speaker switch for `.otherPerson` utterances. Rebuilding then stops the
+            // engine under the buffer that just started, so the consent question is cut off and never completes.
+            case .newDeviceAvailable, .oldDeviceUnavailable, .categoryChange, .routeConfigurationChange: self?.rebuild(reason: "route change \(reason.map { String($0.rawValue) } ?? "?")")
             default: break
             }
         })
@@ -157,6 +171,7 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     /// Re-install the tap with the new input format and restart the engine.
     func rebuild(reason: String) {
         queue.async { [self] in
+            guard !suspendedForAgent else { return }
             removeTap()
             if engine.isRunning { engine.stop() }
             do { try startLocked() } catch { lastError = "rebuild after \(reason) failed: \(error.localizedDescription)" }
@@ -168,7 +183,7 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
     var isSpeaking: Bool { speakingState.withLock { $0.speaking } }
 
     func play(_ audio: SynthesizedAudio, audience: Audience) async -> ClosedRange<TimeInterval>? {
-        guard engine.isRunning || (try? start()) != nil, engine.isRunning else { return nil }
+        guard !suspendedForAgent, engine.isRunning || (try? start()) != nil, engine.isRunning else { return nil }
         guard let buffer = makeBuffer(audio) else { return nil }
         let session = AVAudioSession.sharedInstance()
         if audience == .otherPerson { try? session.overrideOutputAudioPort(.speaker) }
@@ -177,8 +192,15 @@ final class AudioEngineController: NSObject, PCMPlayback, @unchecked Sendable {
         let generation: Int = playLock.withLock { s in s.generation += 1; return s.generation }
         speakingState.withLock { $0.speaking = true }
         let start = CACurrentMediaTime()
+        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let completed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
             playLock.withLock { $0.continuation = cont }
+            // `.dataPlayedBack` never fires if the engine stops mid-buffer (route change, agent takeover); without
+            // this the caller — e.g. the consent flow — would wait forever.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(duration + 2))
+                self?.finishPlayback(generation: generation, completed: false)
+            }
             player.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
                 self?.finishPlayback(generation: generation, completed: true)
             }

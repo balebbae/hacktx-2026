@@ -21,6 +21,11 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
     private var input: AsyncStream<AnalyzerInput>.Continuation?
     private var tasks: [Task<Void, Never>] = []
     private var baseHostTime: TimeInterval?
+    /// Bumped by every `start`/`stop` so a dying analyzer only restarts itself if nobody replaced it.
+    private var generation = 0
+    private var audio: AudioInput?
+    private var recoveries = 0
+    static let maxRecoveries = 5
 
     init() {}
 
@@ -30,6 +35,9 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
 
     func start(audio: AudioInput) async throws {
         guard analyzer == nil else { return }
+        generation += 1
+        let gen = generation
+        self.audio = audio
         guard SpeechTranscriber.isAvailable else { throw TranscriberError.unavailable("SpeechTranscriber is not available on this device") }
         let locale = await SpeechTranscriber.supportedLocale(equivalentTo: .current) ?? Locale(identifier: "en-US")
         self.locale = locale
@@ -52,18 +60,25 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
         let chunks = audio.subscribe()
         tasks.append(Task.detached { [weak self] in
             var converter: AVAudioConverter?
+            // Timeline = frames fed so far. Host-clock chunk stamps jitter against the resampler's frame counts, and
+            // SpeechAnalyzer kills the session on the first overlap ("Audio input timestamp overlaps…", "RecogRejected").
+            var framesFed: AVAudioFramePosition = 0
             for await chunk in chunks {
                 guard let self else { return }
-                let base = self.baseHostTime ?? chunk.timestamp
-                if self.baseHostTime == nil { self.baseHostTime = base }
-                guard let buffer = AudioBuffers.buffer(for: chunk, in: format, converter: &converter) else { continue }
-                continuation.yield(AnalyzerInput(buffer: buffer, bufferStartTime: CMTime(seconds: chunk.timestamp - base, preferredTimescale: 48_000)))
+                if self.baseHostTime == nil { self.baseHostTime = chunk.timestamp }
+                guard let buffer = AudioBuffers.buffer(for: chunk, in: format, converter: &converter), buffer.frameLength > 0 else { continue }
+                let start = CMTime(value: framesFed, timescale: CMTimeScale(format.sampleRate))
+                framesFed += AVAudioFramePosition(buffer.frameLength)
+                continuation.yield(AnalyzerInput(buffer: buffer, bufferStartTime: start))
             }
         })
         tasks.append(Task.detached { [weak self] in
             do {
                 for try await result in transcriber.results { self?.handle(result) }
-            } catch { NSLog("[SpeechAnalyzerTranscriber] results ended: %@", "\(error)") }
+            } catch {
+                NSLog("[SpeechAnalyzerTranscriber] results ended: %@", "\(error)")
+                self?.recover(generation: gen)
+            }
         })
         tasks.append(Task.detached { [weak self] in
             do {
@@ -75,7 +90,21 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
         })
     }
 
+    /// The analyzer can end with an error (e.g. "RecogRejected") while the app keeps running; without this the
+    /// wake word and consent replies go deaf until the next source switch.
+    private func recover(generation gen: Int) {
+        guard gen == generation, let audio, recoveries < Self.maxRecoveries else { return }
+        recoveries += 1
+        Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, gen == self.generation else { return }
+            self.tearDown()
+            do { try await self.start(audio: audio) } catch { NSLog("[SpeechAnalyzerTranscriber] restart failed: %@", "\(error)") }
+        }
+    }
+
     private func handle(_ result: SpeechTranscriber.Result) {
+        recoveries = 0
         let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
         let base = baseHostTime ?? CACurrentMediaTime()
         let start = base + result.range.start.seconds
@@ -93,6 +122,12 @@ final class SpeechAnalyzerTranscriber: Transcriber, VolatileTextSource, @uncheck
     }
 
     func stop() {
+        generation += 1
+        audio = nil
+        tearDown()
+    }
+
+    private func tearDown() {
         input?.finish()
         input = nil
         tasks.forEach { $0.cancel() }

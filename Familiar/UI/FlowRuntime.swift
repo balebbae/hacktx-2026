@@ -42,6 +42,7 @@ final class FlowRuntime: ObservableObject {
     private(set) var contacts: ContactsBridge?
     private(set) var services: Services?
     @Published private(set) var agent: AgentSession?          // S8
+    private var goodbyeDetector: GoodbyeDetector?
     let manualCommands = ManualCommandSource()
     private var tasks: [Task<Void, Never>] = []
     private weak var coordinator: AppCoordinator?
@@ -58,9 +59,10 @@ final class FlowRuntime: ObservableObject {
         if s.consentFlow is StubConsentFlow {
             isBridged = true
             let contacts: ContactsBridge = s.contacts is NoopContactsBridge ? CNContactsBridge(thumbnailData: { [weak self] p in self?.jsonStore?.thumbnailURL(for: p).flatMap { try? Data(contentsOf: $0) } }) : s.contacts
+            // Reuse the store perception matches against; a second store would save people nobody recognizes.
             // The gallery only serves embeddings whose modelID matches, so the store must follow the live embedder
             // (w600k_mbf on the real pipeline, "fake" for ScriptedPerception).
-            let json = JSONPeopleStore(paths: .documents, modelID: (s.perception as? PerceptionPipeline)?.embedder.modelID ?? "fake", contacts: contacts)
+            let json = (s.peopleStore as? JSONPeopleStore) ?? JSONPeopleStore(paths: .documents, modelID: (s.perception as? PerceptionPipeline)?.embedder.modelID ?? "fake", contacts: contacts)
             jsonStore = json
             self.contacts = contacts
             store = json
@@ -92,6 +94,22 @@ final class FlowRuntime: ObservableObject {
         let r = FlowFactory.makeCommandRouter(perception: s.perception, speaker: s.speaker, cueGate: s.cueGate, consentFlow: flow, peopleStore: store, contacts: s.contacts is NoopContactsBridge ? (jsonStore.map { _ in CNContactsBridge() } ?? s.contacts) : s.contacts, setMode: { [weak state] m in state?.mode = m }, setMuted: { [weak state] m in state?.muted = m })
         r.startObserving()
         r.attach(sources: s.commandSources + [manualCommands])
+        // "Nice to meet you" / "see you" with a stranger close → "Want to remember them?"
+        let goodbye = SpeechFactory.makeGoodbyeDetector(transcriber: s.transcriber)
+        r.attachGoodbyes(AsyncStream { cont in goodbye.onGoodbye = { cont.yield($0) } })
+        goodbyeDetector = goodbye
+        // Enough talk in a short window → the router checks for a stranger in view and offers to remember them.
+        let speech = s.transcriber.subscribe()
+        tasks.append(Task { [weak r] in
+            var window: [(t: TimeInterval, words: Int)] = []
+            for await seg in speech where seg.isFinal {
+                window.append((seg.end, seg.text.split(separator: " ").count))
+                window.removeAll { $0.t < seg.end - FlowRuntime.conversationWindow }
+                guard window.reduce(0, { $0 + $1.words }) >= FlowRuntime.conversationWords else { continue }
+                window.removeAll()
+                await r?.conversationDetected(at: seg.end)
+            }
+        })
         router = r
         tasks.append(Task { [weak self] in
             for await st in flow.subscribe() { await MainActor.run { self?.consentState = st; if case let .done(p) = st { self?.lastSaved = p } } }
@@ -121,9 +139,12 @@ final class FlowRuntime: ObservableObject {
         // MARK: end S8
     }
 
+    static let conversationWindow: TimeInterval = 45
+    static let conversationWords = 40
+
     func tearDown() {
         tasks.forEach { $0.cancel() }; tasks.removeAll()
-        router?.stop(); nameCache?.cache.stop(); clipRecorder?.stop()
+        router?.stop(); nameCache?.cache.stop(); clipRecorder?.stop(); goodbyeDetector?.detach()
         router = nil; consentFlow = nil
         if let a = agent { Task { await a.end(reason: "teardown") } }; agent = nil   // S8
     }

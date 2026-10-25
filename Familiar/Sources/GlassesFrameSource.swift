@@ -79,6 +79,7 @@ final class GlassesFrameSource: FrameSource, GlassesStreamCoordinator, @unchecke
     private struct State {
         var status: GlassesStatus = .idle
         var isStreaming = false
+        var isStarting = false
         var session: DeviceSession?
         var camera: Camera?
         var ptsBase: Double?
@@ -100,6 +101,8 @@ final class GlassesFrameSource: FrameSource, GlassesStreamCoordinator, @unchecke
     private let decoder = HEVCFrameDecoder()
     private let tokens = ListenerTokenBag()
     static let connectTimeout: TimeInterval = 8
+    /// The `.stopped` reason of a plain `stop()`; anything else (folded, disconnected, timed out) is worth a reconnect.
+    static let userStopReason = "Stopped"
     private var deviceToken: (any AnyListenerToken)?
 
     /// Non-nil when `options.streamAudio`; valid for the life of the source.
@@ -129,6 +132,13 @@ final class GlassesFrameSource: FrameSource, GlassesStreamCoordinator, @unchecke
             set(.notRegistered)
             throw GlassesError.notRegistered
         }
+        // The reconnect loop and the Glasses screen can both call this; the glasses take one session at a time.
+        let alreadyStarting = state.withLock { s -> Bool in
+            defer { s.isStarting = true }
+            return s.isStarting
+        }
+        guard !alreadyStarting else { return }
+        defer { state.withLock { $0.isStarting = false } }
         stop()
         set(.connecting)
         let selector = AutoDeviceSelector(wearables: wearables)
@@ -419,7 +429,7 @@ final class GlassesFrameSource: FrameSource, GlassesStreamCoordinator, @unchecke
         decoder.reset()
         setStreaming(false)
         if session != nil || camera != nil || status.isActive {
-            set(final ?? .stopped(reason: "Stopped"))
+            set(final ?? .stopped(reason: Self.userStopReason))
         } else if let final {
             set(final)
         }

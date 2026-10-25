@@ -58,7 +58,17 @@ final class SpokenConsentFlow: ConsentFlow {
 
     func tapAnswer(yes: Bool) {
         guard isActive else { return }
+        // The card (and its YES) is up while the question is still being spoken, before anyone subscribes to
+        // answers; keep the tap so the wait that follows picks it up instead of hanging.
+        pendingTap = yes
         answerBus.publish(.tap(yes))
+    }
+
+    private var pendingTap: Bool?
+
+    private func takePendingTap() -> Answer? {
+        defer { pendingTap = nil }
+        return pendingTap.map { .tap($0) }
     }
 
     func cancel() {
@@ -76,6 +86,7 @@ final class SpokenConsentFlow: ConsentFlow {
 
         if confirmFirst {
             acceptedSpeakers = [.user, .none]
+            pendingTap = nil
             state = .confirmingWithUser
             notBefore = clock()
             await speaker.speak(Utterance(text: Phrasebook.wantToRemember, priority: 0, category: "consent", personID: nil, dedupeKey: nil, audience: .user, earcon: true))
@@ -116,6 +127,7 @@ final class SpokenConsentFlow: ConsentFlow {
         var name = await resolveNameGuess()
         if Task.isCancelled { return }
         cueGate.consentActive = true
+        pendingTap = nil
         state = .asking(name: name)
         let question = Phrasebook.consentQuestion(userName: userName(), name: name)
         lastQuestion = question
@@ -287,7 +299,9 @@ final class SpokenConsentFlow: ConsentFlow {
 
     /// First tap or spoken verdict after `notBefore`, or nil on timeout.
     private func firstAnswer(timeout: TimeInterval) async -> Answer? {
+        if let tap = takePendingTap() { return tap }
         let stream = answerBus.subscribe()
+        defer { pendingTap = nil }
         return await withTimeout(timeout) {
             for await a in stream { return a }
             return nil
@@ -298,7 +312,9 @@ final class SpokenConsentFlow: ConsentFlow {
 
     /// First answer, unless the target track disappears for ~0.8 s first.
     private func awaitAnswer(timeout: TimeInterval, track: Int) async -> Awaited {
+        if let tap = takePendingTap() { return .answer(tap) }
         let stream = answerBus.subscribe()
+        defer { pendingTap = nil }
         let poll = config.pollInterval
         let perception = self.perception
         let missesNeeded = max(1, Int((0.8 / poll).rounded()))

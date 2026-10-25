@@ -30,7 +30,11 @@ struct FamiliarApp: App {
 
 struct RootView: View {
     @EnvironmentObject var coordinator: AppCoordinator
+    @Environment(\.scenePhase) private var scenePhase
     var body: some View {
-        if coordinator.isReady { HomeView() } else { ReadinessView() }
+        Group {
+            if coordinator.isReady { HomeView() } else { ReadinessView() }
+        }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { coordinator.appBecameActive() } }
     }
 }

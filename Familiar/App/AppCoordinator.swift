@@ -43,14 +43,18 @@ final class AppCoordinator: ObservableObject {
         services = s
         tracks = []; preview = nil; events = []; utterances = []; transcript = []
         s.cueGate.muted = state.muted
-        do {
-            try await s.frameSource.start()
-            try await s.perception.start(frames: s.frameSource, gallery: s.peopleStore)
-            try await s.transcriber.start(audio: s.audioInput)
-        } catch {
-            lastError = error.localizedDescription
-            log("start failed: \(error.localizedDescription)")
+        lastError = nil
+        // The camera starts on its own: glasses that are not linked yet must not keep speech and perception down.
+        if let glasses = s.frameSource as? GlassesFrameSource {
+            tasks.append(Task { [weak self] in
+                for await st in glasses.statusChanges() { self?.glassesStatusChanged(st) }
+            })
+            ensureGlasses()
+        } else {
+            do { try await s.frameSource.start() } catch { report("camera start failed", error) }
         }
+        do { try await s.perception.start(frames: s.frameSource, gallery: s.peopleStore) } catch { report("perception start failed", error) }
+        do { try await s.transcriber.start(audio: s.audioInput) } catch { report("speech start failed", error) }
         tasks.append(Task { [weak self] in
             for await frame in s.frameSource.subscribe() { await self?.noteFrame(at: frame.timestamp) }
         })
@@ -71,7 +75,70 @@ final class AppCoordinator: ObservableObject {
         log("started source \(source.title)")
     }
 
+    private func report(_ what: String, _ error: Error) {
+        lastError = error.localizedDescription
+        log("\(what): \(error.localizedDescription)")
+    }
+
+    // MARK: Glasses keeper
+    // DAT sessions end for good on fold, Bluetooth drops or a trip to the Meta AI app, and the SDK never restarts them.
+    // While the source is the glasses we keep trying, except when the user has to act (register, allow the camera).
+
+    private var glassesRetry: Task<Void, Never>?
+    private var lastGlassesAttempt: TimeInterval = -.infinity
+
+    /// Starts the glasses stream unless it is running, paused by the device, or already being retried.
+    func ensureGlasses() {
+        guard glassesRetry == nil, let glasses = services?.frameSource as? GlassesFrameSource, !glasses.status.isActive else { return }
+        glassesRetry = Task { [weak self] in
+            var delay: TimeInterval = 0
+            while let self, !Task.isCancelled, self.services?.frameSource === glasses, !glasses.status.isActive {
+                let wait = max(delay, self.lastGlassesAttempt + 2 - CACurrentMediaTime())
+                if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+                guard !Task.isCancelled, self.services?.frameSource === glasses else { break }
+                self.lastGlassesAttempt = CACurrentMediaTime()
+                do {
+                    try await glasses.start()
+                    self.lastError = nil
+                    self.log("glasses session started")
+                    break
+                } catch let e as GlassesError where e == .notRegistered || e == .cameraPermissionDenied {
+                    self.report("glasses need you", e)
+                    break
+                } catch {
+                    self.report("glasses retry", error)
+                    delay = min(5, max(1, delay * 2))
+                }
+            }
+            // A cancelled loop was replaced by `shutdown()`; leave the new one alone.
+            if !Task.isCancelled { self?.glassesRetry = nil }
+        }
+    }
+
+    private func glassesStatusChanged(_ status: GlassesStatus) {
+        switch status {
+        case let .stopped(reason) where reason != GlassesFrameSource.userStopReason:
+            log("glasses stopped: \(reason)")
+            ensureGlasses()
+        case let .failed(reason):
+            log("glasses failed: \(reason)")
+            ensureGlasses()
+        case .streaming:
+            lastError = nil
+        default:
+            break
+        }
+    }
+
+    /// Coming back from the Meta AI app (registration, camera permission) or from the lock screen.
+    func appBecameActive() {
+        lastGlassesAttempt = -.infinity
+        ensureGlasses()
+    }
+
     func shutdown() {
+        glassesRetry?.cancel()
+        glassesRetry = nil
         tasks.forEach { $0.cancel() }
         tasks.removeAll()
         services?.perception.stop()
