@@ -240,6 +240,14 @@ final class PoyoBrainTests: XCTestCase {
         XCTAssertEqual(speaker.texts.count, before, "SKIP is silent")
     }
 
+    func testUncalibratedVoiceSplitDoesNotSilenceFollowUps() async {
+        brain.speakerTrusted = { false }
+        await brain.ask("what's on the table")
+        now += 2
+        await brain.hear(TranscriptSegment(text: "and on my left", start: now, end: now, isFinal: true, speaker: .other))
+        XCTAssertEqual(vision.prompts.count, 2, "the wearer's follow-up, mislabelled as someone else, still counts")
+    }
+
     func testNothingDuringConsent() async {
         brain.consentActive = { true }
         await brain.ask("what's on the table")

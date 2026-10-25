@@ -144,6 +144,7 @@ final class FlowRuntime: ObservableObject {
                               userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) })
             b.consentActive = session.consentActive
             b.wakeWordCollecting = session.wakeWordCollecting
+            b.speakerTrusted = { [weak vad = s.vad] in vad?.isCalibrated ?? false }
             tasks += b.start(speech: s.transcriber.subscribe(), unparsed: wake?.subscribeUnparsed())
             r.askAssistant = { [weak b] question in await b?.ask(question) }
             brain = b

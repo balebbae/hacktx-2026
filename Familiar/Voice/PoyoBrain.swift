@@ -27,6 +27,9 @@ final class PoyoBrain: ObservableObject {
 
     var consentActive: () -> Bool = { false }
     var wakeWordCollecting: () -> Bool = { false }
+    /// Whether `.other` really means someone else. False until the wearer calibrates their voice: on the phone mic the
+    /// uncalibrated loudness split labels everyone, the wearer included, as `.other`.
+    var speakerTrusted: () -> Bool = { true }
     var followUpWindow: TimeInterval = 8
     var clock: () -> TimeInterval = { CACurrentMediaTime() }
 
@@ -55,7 +58,7 @@ final class PoyoBrain: ObservableObject {
         let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let now = clock()
-        if seg.speaker == .other { lastOtherAt = now; followUpUntil = -.infinity; return }
+        if seg.speaker == .other, speakerTrusted() { lastOtherAt = now; followUpUntil = -.infinity; return }
         guard WakeWord.find(in: text) == nil, !wakeWordCollecting() else { return }
         if now <= followUpUntil {
             await ask(text)

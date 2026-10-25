@@ -204,7 +204,10 @@ final class AppCoordinator: ObservableObject {
     private func handle(reading r: SceneReading, services s: Services, state: AppState) {
         sceneReading = r
         log("vision \(r.path.rawValue)\(r.pathMeters.map { " \($0) m" } ?? ""): \(r.summary)")
-        let inConversation = s.transcriber.recentSegments(seconds: 15).contains { $0.isFinal && $0.speaker == .other }
+        // Talking with someone = speech in the last 12 s while a person is near and facing the wearer. Not the voice
+        // split (uncalibrated, it calls everyone "other") and not background chatter at a busy venue.
+        let speech = s.transcriber.recentSegments(seconds: 12).contains { $0.isFinal }
+        let inConversation = speech && s.perception.currentTracks().contains { $0.distance != .far && $0.isFacingUser }
         for u in narration.utterances(for: r, mode: state.mode, now: CACurrentMediaTime(), inConversation: inConversation) where s.cueGate.admit(u) {
             Task { await s.speaker.speak(u) }
         }
