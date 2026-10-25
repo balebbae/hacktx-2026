@@ -187,12 +187,12 @@ final class AudioEngineController: NSObject, PCMPlayback, StreamingPCMPlayback, 
         if audience == .otherPerson { try? session.overrideOutputAudioPort(.speaker) }
         defer { if audience == .otherPerson { try? session.overrideOutputAudioPort(.none) } }
 
-        let generation: Int = playLock.withLock { s in s.generation += 1; return s.generation }
         speakingState.withLock { $0.speaking = true }
         let start = CACurrentMediaTime()
         let duration = Double(buffer.frameLength) / buffer.format.sampleRate
         let completed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            playLock.withLock { $0.continuation = cont }
+            // One step, so a `stop()` in between cannot bump the generation and strand this continuation.
+            let generation: Int = playLock.withLock { s in s.generation += 1; s.continuation = cont; return s.generation }
             // `.dataPlayedBack` never fires if the engine stops mid-buffer (route change, interruption); without
             // this the caller — e.g. the consent flow — would wait forever.
             Task { [weak self] in
@@ -228,14 +228,13 @@ final class AudioEngineController: NSObject, PCMPlayback, StreamingPCMPlayback, 
         if audience == .otherPerson { try? session.overrideOutputAudioPort(.speaker) }
         defer { if audience == .otherPerson { try? session.overrideOutputAudioPort(.none) } }
 
-        let generation: Int = playLock.withLock { s in s.generation += 1; return s.generation }
         speakingState.withLock { $0.speaking = true }
         let start = CACurrentMediaTime()
         let state = OSAllocatedUnfairLock(initialState: StreamState(held: prefix))
         let prebuffer = streamPrebuffer
 
         let completed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-            playLock.withLock { $0.continuation = cont }
+            let generation: Int = playLock.withLock { s in s.generation += 1; s.continuation = cont; return s.generation }
             Task {
                 var failed = false
                 do {
@@ -270,7 +269,9 @@ final class AudioEngineController: NSObject, PCMPlayback, StreamingPCMPlayback, 
     private struct StreamState { var held: [Float]; var started = false; var scheduled = 0; var played = 0; var done = false; var seconds = 0.0 }
 
     private func scheduleStreamed(_ samples: [Float], gain: Float, sampleRate: Double, state: OSAllocatedUnfairLock<StreamState>, generation: Int) {
-        guard !samples.isEmpty, let buffer = makeBuffer(SynthesizedAudio(samples: gain == 1 ? samples : samples.map { $0 * gain }, sampleRate: sampleRate, source: "stream")) else { return }
+        // Checked last, right before scheduling: a chunk converted while `stop()` ran must not restart the player.
+        guard !samples.isEmpty, let buffer = makeBuffer(SynthesizedAudio(samples: gain == 1 ? samples : samples.map { $0 * gain }, sampleRate: sampleRate, source: "stream")),
+              playLock.withLock({ $0.generation == generation }) else { return }
         state.withLock { $0.scheduled += 1; $0.seconds += Double(buffer.frameLength) / buffer.format.sampleRate }
         player.scheduleBuffer(buffer, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
             let last = state.withLock { s -> Bool in s.played += 1; return s.done && s.played >= s.scheduled }
@@ -279,11 +280,12 @@ final class AudioEngineController: NSObject, PCMPlayback, StreamingPCMPlayback, 
         if !player.isPlaying { player.play() }
     }
 
-    /// PCMPlayback: cut the current utterance short.
+    /// PCMPlayback: cut the current utterance short. A new generation, so a stream still receiving chunks stops
+    /// scheduling them (and the mic gate does not reopen under the rest of the answer).
     func stop() {
-        let generation = playLock.withLock { $0.generation }
+        let cont = playLock.withLock { s in s.generation += 1; defer { s.continuation = nil }; return s.continuation }
         player.stop()
-        finishPlayback(generation: generation, completed: false)
+        cont?.resume(returning: false)
     }
 
     private func makeBuffer(_ audio: SynthesizedAudio) -> AVAudioPCMBuffer? {

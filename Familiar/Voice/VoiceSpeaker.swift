@@ -3,7 +3,7 @@ import QuartzCore
 import os
 
 /// The production `Speaker`: a priority queue in front of one synthesizer and one playback.
-/// - priority 0 interrupts whatever is playing and clears the queue;
+/// - priority 0 interrupts whatever is playing, waiting or synthesizing, and clears the queue;
 /// - priorities 1–3 are FIFO with depth `maxQueued` (the lowest-priority queued item is dropped when full);
 /// - an utterance with the same `dedupeKey` replaces the queued one;
 /// - utterances of priority ≥ 1 start at least `minimumSpacing` after the previous utterance ended;
@@ -41,6 +41,8 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
     private struct State {
         var queue: [Job] = []
         var current: Job?
+        /// The current job's work, cancelled by priority 0 so a stale line's spacing, hold or synthesis ends at once.
+        var performing: Task<ClosedRange<TimeInterval>?, Never>?
         var workerRunning = false
         var lastEnd: TimeInterval?
         var speaking = false
@@ -70,11 +72,15 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
             let job = Job(utterance: u, continuation: cont)
             var dropped: [(Job, String)] = []
             var interrupt = false
+            var cancel: Task<ClosedRange<TimeInterval>?, Never>?
             let startWorker: Bool = state.withLock { s in
                 if u.priority == 0 {
                     dropped = s.queue.map { ($0, "cleared by priority 0") }
                     s.queue = [job]
                     interrupt = s.current != nil
+                    // Not current any more: a line still waiting, synthesizing or buffering never plays before this one.
+                    s.current = nil
+                    cancel = s.performing; s.performing = nil
                 } else {
                     if let key = u.dedupeKey, let i = s.queue.firstIndex(where: { $0.utterance.dedupeKey == key }) {
                         dropped.append((s.queue.remove(at: i), "replaced by same dedupeKey"))
@@ -93,6 +99,7 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
             }
             for (j, why) in dropped { onDropped?(j.utterance, why); j.continuation.resume(returning: nil) }
             if interrupt { playback.stop() }
+            cancel?.cancel()
             if startWorker { Task.detached(priority: .userInitiated) { [weak self] in await self?.run() } }
         }
     }
@@ -106,9 +113,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
                 return j
             }
             guard let job = next else { return }
-            let window = await perform(job)
+            let task = Task { await self.perform(job) }
+            // A priority-0 line that arrived before the task was stored found nothing to cancel: cancel it here.
+            if !state.withLock({ s -> Bool in guard s.current?.id == job.id else { return false }; s.performing = task; return true }) { task.cancel() }
+            let window = await task.value
             state.withLock { s in
                 if s.current?.id == job.id { s.current = nil }
+                s.performing = nil
                 s.speaking = false
                 if let window { s.lastEnd = window.upperBound }
             }
@@ -165,11 +176,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
                 streamError = error
             }
         }
+        guard isCurrent(job) else { return nil }    // interrupted while the stream was opening
         let audio: SynthesizedAudio
         do {
             if let streamError, let fb = synthesizer as? FallbackSynthesizer { audio = try await fb.synthesizeAfterPrimaryFailed(u.text, error: streamError) }
             else { audio = try await synthesizer.synthesize(u.text) }
         } catch {
+            guard isCurrent(job) else { return nil }
             onDropped?(u, "synthesis failed: \(error)")
             return nil
         }
@@ -198,10 +211,13 @@ final class VoiceSpeaker: Speaker, @unchecked Sendable {
     private func isCurrent(_ job: Job) -> Bool { state.withLock { $0.current?.id == job.id } }
 
     func stopAll() {
-        let dropped: [Job] = state.withLock { s in
-            let q = s.queue; s.queue.removeAll(); s.current = nil; s.speaking = false; return q
+        let (dropped, cancel) = state.withLock { s in
+            let q = s.queue, t = s.performing
+            s.queue.removeAll(); s.current = nil; s.performing = nil; s.speaking = false
+            return (q, t)
         }
         playback.stop()
+        cancel?.cancel()
         for j in dropped { onDropped?(j.utterance, "stopAll"); j.continuation.resume(returning: nil) }
     }
 

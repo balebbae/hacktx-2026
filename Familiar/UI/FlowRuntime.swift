@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import QuartzCore
 
 /// Keys for the Settings this session adds. Stored in UserDefaults so S5 can read them when wiring `Services.make`.
 enum UserSettings {
@@ -44,6 +43,8 @@ final class FlowRuntime: ObservableObject {
     /// Non-nil while the consent card shows the number pad (the other person holds the phone).
     @Published private(set) var numberEntry: SpokenConsentFlow.NumberRequest?
     private var goodbyeDetector: GoodbyeDetector?
+    /// Host time of the last frame with a near, facing face whose mouth was open (Poyo's follow-up gate looks back to it).
+    private var lastTalkingMouth: TimeInterval = -.infinity
     let manualCommands = ManualCommandSource()
     private var tasks: [Task<Void, Never>] = []
     private weak var coordinator: AppCoordinator?
@@ -162,12 +163,21 @@ final class FlowRuntime: ObservableObject {
             b.consentActive = session.consentActive
             b.actions = { [weak scene = s.scene] in scene?.currentActions() }
             b.wakeWordCollecting = session.wakeWordCollecting
-            // A follow-up without the name is taken only when nobody in view is visibly talking to the wearer:
-            // the voice split cannot tell who spoke, but a near, facing face with its mouth moving can.
-            b.someoneElseTalking = { [weak perception = s.perception] in
-                guard let perception else { return false }
-                if let active = (perception as? PerceptionPipeline)?.activeSpeaker, active.otherIsSpeaking(at: CACurrentMediaTime()) { return true }
-                return perception.currentTracks().contains { $0.isFacingUser && $0.distance != .far && ($0.mouthOpenness ?? 0) >= PoyoBrain.talkingMouth }
+            // A follow-up without the name is taken only when nobody in view was visibly talking to the wearer while
+            // it was said: the voice split cannot tell who spoke, but a near, facing face with its mouth moving can.
+            // Checked over the whole sentence, since by its final segment the speaker has stopped and the mouth closed.
+            let events = s.perception.subscribe()
+            tasks.append(Task { [weak self] in
+                for await e in events {
+                    guard case let .snapshot(tracks, _) = e,
+                          let t = tracks.first(where: { $0.isFacingUser && $0.distance != .far && ($0.mouthOpenness ?? 0) >= PoyoBrain.talkingMouth })?.timestamp else { continue }
+                    self?.lastTalkingMouth = t
+                }
+            })
+            b.someoneElseTalking = { [weak self, weak perception = s.perception] since in
+                // It keeps only the latest other-speech time, so asking about the sentence's start means "at any point since".
+                if let active = (perception as? PerceptionPipeline)?.activeSpeaker, active.otherIsSpeaking(at: since) { return true }
+                return (self?.lastTalkingMouth ?? -.infinity) >= since
             }
             b.scribe = ScribeTranscriber()
             b.audio = clipRecorder

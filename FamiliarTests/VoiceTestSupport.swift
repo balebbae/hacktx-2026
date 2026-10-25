@@ -12,6 +12,8 @@ final class FakeSynth: SpeechSynthesizer, @unchecked Sendable {
     let id: String
     var duration: TimeInterval = 0.5
     var failTexts: Set<String> = []
+    /// Seconds a text takes to synthesize (real time, cancellable), e.g. an uncached Poyo answer.
+    var delays: [String: TimeInterval] = [:]
     private let lock = NSLock()
     private var log: [String] = []
     var texts: [String] { lock.lock(); defer { lock.unlock() }; return log }
@@ -21,6 +23,7 @@ final class FakeSynth: SpeechSynthesizer, @unchecked Sendable {
     func synthesize(_ text: String) async throws -> SynthesizedAudio {
         lock.lock(); log.append(text); lock.unlock()
         if failTexts.contains(text) { throw Failed() }
+        if let d = delays[text] { try await Task.sleep(nanoseconds: UInt64(d * 1_000_000_000)) }
         return SynthesizedAudio(samples: [Float](repeating: 0.1, count: Int(duration * 16_000)), sampleRate: 16_000, source: id)
     }
 }

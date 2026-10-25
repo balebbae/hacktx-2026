@@ -31,9 +31,9 @@ final class PoyoBrain: ObservableObject {
     /// Recent action captions ("Someone crossing, left to right, close."), so "what's going on?" has motion.
     var actions: () -> String? = { nil }
     var wakeWordCollecting: () -> Bool = { false }
-    /// Someone in view is visibly talking to the wearer right now: a sentence in the follow-up window is theirs,
-    /// not a question for Poyo. Set by `FlowRuntime` from perception.
-    var someoneElseTalking: () -> Bool = { false }
+    /// Someone in view was visibly talking to the wearer at any point since the given time (the sentence's start):
+    /// a sentence in the follow-up window is then theirs, not a question for Poyo. Set by `FlowRuntime` from perception.
+    var someoneElseTalking: (_ since: TimeInterval) -> Bool = { _ in false }
     /// Re-transcribes the seconds where a name is said (on-device recognition turns "Jagadeep" into "JD").
     var scribe: ScribeTranscriber?
     var audio: AudioChunkClipRecorder?
@@ -55,6 +55,9 @@ final class PoyoBrain: ObservableObject {
     private var followUpNeedsRequest = false
     /// Poyo just asked "What's their name?": the next sentence is the new name.
     private var awaitingNameUntil: TimeInterval = -.infinity
+    /// When the open window opened. Sentences said while Poyo was thinking reach `hear` only after the answer (the
+    /// speech loop waits for it), so a sentence is judged by when it started, not when it arrived.
+    private var windowOpened: TimeInterval = -.infinity
     private var current: Task<Void, Never>?
 
     init(vision: VisionLLM, scene: CloudScene, perception: Perception, transcriber: Transcriber, speaker: Speaker, cueGate: CueGate, router: CommandRouter,
@@ -79,26 +82,27 @@ final class PoyoBrain: ObservableObject {
         let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, WakeWord.find(in: text) == nil, !wakeWordCollecting() else { return }
         let now = clock()
-        if now <= awaitingNameUntil {
+        if now <= awaitingNameUntil, seg.start >= windowOpened {
             awaitingNameUntil = -.infinity
             lines.append(AgentLine(role: .user, text: text))
             dialogue.record(.wearer, text, at: now)
             let heard = await scribe?.retranscribe(audio, from: seg.start, to: seg.end) ?? text
             guard let name = Self.spokenName(in: heard) ?? Self.spokenName(in: text) else { await say(Phrasebook.didNotGetThat); return }
             await renameAndSay(name)
-        } else if now <= followUpUntil {
+        } else if now <= followUpUntil, seg.start >= windowOpened {
             let needsRequest = followUpNeedsRequest
             followUpUntil = -.infinity                  // one sentence, then back to silence
             // After a plain answer only a sentence that sounds like a follow-up counts, and not while someone in view
             // is visibly talking to the wearer: in a packed room that sentence is theirs.
-            if needsRequest, !Self.soundsLikeFollowUp(text) || someoneElseTalking() { return }
+            if needsRequest, !Self.soundsLikeFollowUp(text) || someoneElseTalking(seg.start) { return }
             await ask(text)
         }
     }
 
     /// Push-to-talk (volume button): the next sentence within `listenWindow` is for Poyo, no wake word needed.
     func listenNext() {
-        followUpUntil = clock() + listenWindow
+        windowOpened = clock()
+        followUpUntil = windowOpened + listenWindow
         followUpNeedsRequest = false
         lines.append(AgentLine(role: .app, text: "listening"))
     }
@@ -107,7 +111,8 @@ final class PoyoBrain: ObservableObject {
     /// a shorter window for request-like follow-ups after a plain answer. The window only opens because Poyo was
     /// addressed, so it never joins a conversation on its own.
     private func noteAnswered(asked: Bool) {
-        followUpUntil = clock() + (asked ? followUpWindow : plainFollowUpWindow)
+        windowOpened = clock()
+        followUpUntil = windowOpened + (asked ? followUpWindow : plainFollowUpWindow)
         followUpNeedsRequest = !asked
     }
 
@@ -144,7 +149,8 @@ final class PoyoBrain: ObservableObject {
             lines.append(AgentLine(role: .agent, text: Phrasebook.whatName))
             dialogue.record(.wearer, text, at: clock())
             await say(Phrasebook.whatName)
-            awaitingNameUntil = clock() + 10
+            windowOpened = clock()
+            awaitingNameUntil = windowOpened + 10
             return
         }
         // Built-in commands stay on the phone, except "what's around me", which is what the live view is for.
