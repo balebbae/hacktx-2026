@@ -7,7 +7,7 @@ struct SettingsView: View {
     @AppStorage(UserSettings.voiceProvider) private var voiceProvider = "elevenlabs"
     @AppStorage(UserSettings.matchThreshold) private var matchThreshold = 0.40
     @AppStorage(UserSettings.audioRoute) private var audioRoute = "auto"
-    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
+    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
     @AppStorage(UserSettings.assistantBrain) private var assistantBrain = "vision"
     @State private var confirmReset = false
@@ -35,7 +35,7 @@ struct SettingsView: View {
                 .accessibilityHint("Where the microphone and speaker are. Glasses HFP stops the glasses camera.")
                 .onChange(of: audioRoute) { _, _ in Task { await coordinator.restart(source: state.source) } }
                 Picker("Volume button", selection: $volumePrimary) {
-                    Text("Who's here?").tag("whoIsHere"); Text("Remember them").tag("rememberThem")
+                    Text("Ask Poyo (click, then talk)").tag("askPoyo"); Text("Who's here?").tag("whoIsHere"); Text("Remember them").tag("rememberThem")
                 }
                 .accessibilityHint("What a volume button press triggers")
                 Toggle("Speak cues aloud (Simulator)", isOn: $state.speakLogSpeakerAloud)

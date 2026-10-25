@@ -5,7 +5,7 @@ struct HomeView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @StateObject private var runtime = FlowRuntime()
     @AppStorage(UserSettings.readinessDone) private var readinessDone = false
-    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "whoIsHere"
+    @AppStorage(UserSettings.volumePrimary) private var volumePrimary = "askPoyo"
     @State private var showReadiness = false
     @State private var detailPerson: Person?
     @State private var showDetail = false
@@ -99,11 +99,16 @@ struct HomeView: View {
         }
         .background(VolumeButtonObserver { pressed in
             guard pressed else { return }
-            if volumePrimary == "rememberThem" { rememberThem() } else { whoIsHere() }
+            switch volumePrimary {
+            case "rememberThem": rememberThem()
+            case "whoIsHere": whoIsHere()
+            default: runtime.listenForPoyo()      // push-to-talk: works in a noisy room where "Poyo" may not be heard
+            }
         })
         .fullScreenCover(isPresented: Binding(get: { runtime.showsConsentCard }, set: { if !$0 { runtime.cancelConsent() } })) {
             ConsentCardView(state: runtime.consentState, question: consentQuestion, onAnswer: { runtime.tapAnswer(yes: $0) }, onCancel: { runtime.cancelConsent() },
-                            numberEntry: runtime.numberEntry, userName: state.userName, onNumber: { runtime.submitNumber($0) })
+                            numberEntry: runtime.numberEntry, userName: state.userName,
+                            onNumber: { runtime.submitNumber($0, name: $1) })
         }
         .fullScreenCover(isPresented: $previewConsentCard) {
             ConsentCardView(state: .listening, question: Phrasebook.consentQuestion(userName: state.userName, name: "Marcus"), onAnswer: { _ in previewConsentCard = false }, onCancel: { previewConsentCard = false })

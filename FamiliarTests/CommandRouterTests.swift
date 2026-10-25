@@ -94,6 +94,27 @@ final class CommandRouterTests: XCTestCase {
         XCTAssertEqual(speaker.texts.last, "Stairs ahead. Marcus, 12 o'clock, close. No one else. Kitchen.")
     }
 
+    func testContactOfferNeedsTheSameNewPersonFaceToFaceFor20Seconds() async {
+        router.startObserving()
+        let stranger = FakePerception.track(5, distance: .close)
+        perception.tracks = [stranger]
+        func see() async { perception.publish(.snapshot(tracks: [stranger], preview: nil)); try? await Task.sleep(nanoseconds: 50_000_000) }
+        await see()
+        await router.conversationDetected(at: now)
+        XCTAssertEqual(flow.begins, [], "a face that just turned up is not a conversation partner")
+        now += 21
+        await see()
+        await router.conversationDetected(at: now)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(flow.begins, [true])
+        now += 400
+        await see()
+        await router.conversationDetected(at: now)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(flow.begins, [true], "offered once per person")
+        router.stop()
+    }
+
     func testConversationWindowOnThePhoneCountsWordsFromAnyone() {
         var w = ConversationWindow(); w.words = 10; w.requireBothSides = false
         let seg = { (t: TimeInterval, n: Int) in TranscriptSegment(text: Array(repeating: "word", count: n).joined(separator: " "), start: t - 1, end: t, isFinal: true, speaker: .user) }

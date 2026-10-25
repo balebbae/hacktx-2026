@@ -28,6 +28,11 @@ final class CommandRouter: ObservableObject {
     var goodbyeCooldown: TimeInterval = 60
     var conversationCooldown: TimeInterval = 180
     private var lastConversationOfferAt: TimeInterval = -.infinity
+    /// How long an unknown person must have been near and facing the wearer before a conversation counts as one
+    /// with them (in a packed room there is always talk and always a face somewhere).
+    var faceToFaceSeconds: TimeInterval = 20
+    private var nearSince: [Int: (first: TimeInterval, last: TimeInterval)] = [:]
+    private var offeredTracks: Set<Int> = []
 
     init(perception: Perception, speaker: Speaker, cueGate: CueGate, consentFlow: ConsentFlow, peopleStore: PeopleStore, contacts: ContactsBridge, setMode: @escaping (ChatterMode) -> Void, setMuted: @escaping (Bool) -> Void, rollCall: @escaping ([TrackSnapshot]) -> String = RollCall.phrase(tracks:), clock: @escaping () -> TimeInterval = { CACurrentMediaTime() }) {
         self.perception = perception; self.speaker = speaker; self.cueGate = cueGate; self.consentFlow = consentFlow
@@ -73,6 +78,10 @@ final class CommandRouter: ObservableObject {
         switch e {
         case let .snapshot(tracks, _):
             for t in tracks { if case let .known(pid, name, _) = t.identity { lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: t.bearing, at: now) } }
+            for t in tracks where !t.identity.isKnown && t.distance != .far && t.isFacingUser {
+                nearSince[t.trackID] = (nearSince[t.trackID]?.first ?? now, now)
+            }
+            nearSince = nearSince.filter { now - $0.value.last < 3 }      // a glance away is fine; walking off is not
         case let .knownLeft(pid, name, last): lastSeen[pid] = LastSeen(name: name, personID: pid, bearing: last, at: now)
         default: break
         }
@@ -148,8 +157,12 @@ final class CommandRouter: ObservableObject {
     /// cooldown, so a "no" is not re-asked every minute of the same chat.
     func conversationDetected(at t: TimeInterval) async {
         guard !consentActive, t - lastConversationOfferAt >= conversationCooldown, t - lastGoodbyeFlowAt >= goodbyeCooldown else { return }
-        let strangerNear = perception.currentTracks().contains { !$0.identity.isKnown && $0.distance != .far }
-        guard strangerNear else { DiagnosticLog.write("conversation: no unknown face nearby, not offering"); return }
+        let now = clock()
+        let partner = perception.currentTracks().first { tr in
+            !tr.identity.isKnown && !offeredTracks.contains(tr.trackID) && (nearSince[tr.trackID].map { now - $0.first >= faceToFaceSeconds } ?? false)
+        }
+        guard let partner else { DiagnosticLog.write("conversation: nobody new face to face for \(Int(faceToFaceSeconds)) s, not offering"); return }
+        offeredTracks.insert(partner.trackID)                           // once per person, whatever they answer
         lastConversationOfferAt = t
         lastGoodbyeFlowAt = t
         Task { await consentFlow.begin(confirmFirst: true) }

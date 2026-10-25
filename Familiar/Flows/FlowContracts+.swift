@@ -169,6 +169,7 @@ extension Phrasebook {
     static func renamed(_ name: String) -> String { "Updated. That's \(name) now." }
     static let nobodyToUpdate = "I don't see anyone in your contacts to update."
     static let notInContactsYet = "They're not in your contacts yet."
+    static let whatName = "What's their name?"
     /// "Got 5 1 2, 5 5 5, 0 1 0 0." — digit by digit so the wearer can check it.
     static func gotNumber(_ digits: String) -> String {
         let d = Array(digits)

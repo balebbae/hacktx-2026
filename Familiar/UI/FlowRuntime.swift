@@ -150,8 +150,10 @@ final class FlowRuntime: ObservableObject {
             let b = PoyoBrain(vision: s.cloudScene.client, scene: s.cloudScene, perception: s.perception, transcriber: s.transcriber, speaker: s.speaker, cueGate: s.cueGate, router: r,
                               userName: { [weak state] in state?.userName ?? "Your friend" }, knownNames: { store.all().map(\.name) })
             b.consentActive = session.consentActive
+            b.actions = { [weak scene = s.scene] in scene?.currentActions() }
             b.wakeWordCollecting = session.wakeWordCollecting
-            b.speakerTrusted = { [weak vad = s.vad] in vad?.isCalibrated ?? false }
+            b.scribe = ScribeTranscriber()
+            b.audio = clipRecorder
             b.rename = { [weak self] name in await self?.renameCurrentPerson(to: name) ?? Phrasebook.nobodyToUpdate }
             tasks += b.start(speech: s.transcriber.subscribe(), unparsed: wake?.subscribeUnparsed())
             r.askAssistant = { [weak b] question in await b?.ask(question) }
@@ -201,7 +203,15 @@ final class FlowRuntime: ObservableObject {
     func whoIsHere() { send(.whoIsHere) }
     func rememberThem() { send(.rememberThem) }
     func tapAnswer(yes: Bool) { consentFlow?.tapAnswer(yes: yes) }
-    func submitNumber(_ text: String?) { (consentFlow as? SpokenConsentFlow)?.enterNumber(text) }
+    func submitNumber(_ text: String?, name: String? = nil) { (consentFlow as? SpokenConsentFlow)?.enterNumber(text, name: name) }
+
+    /// Volume button: a chime, then the next sentence goes to Poyo without the wake word.
+    func listenForPoyo() {
+        guard let brain, let s = services else { whoIsHere(); return }
+        coordinator?.log("push to talk")
+        brain.listenNext()
+        Task { await s.speaker.speak(.heardYou) }
+    }
 
     /// "Poyo, change their contact to Anish": the remembered person in view (largest face), else the one saved in the
     /// last 10 minutes. Renames the record, the iOS contact and the live label. Returns what to say.

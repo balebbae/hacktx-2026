@@ -53,6 +53,8 @@ final class Services: ObservableObject {
     let scene = SceneAwareness()
     /// The always-on eye: redacted frames → vision model → what matters for walking.
     let cloudScene = CloudScene(client: VisionLLMClient())
+    /// Is the wearer walking (phone motion or the view expanding)? Gates wall and hazard alerts.
+    let motion = MotionState()
 
     /// Convenience accessors for the skeleton UI (nil when the real module is wired instead).
     var logSpeaker: LogSpeaker? { speaker as? LogSpeaker }

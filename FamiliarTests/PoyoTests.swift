@@ -10,18 +10,30 @@ final class NarrationPolicyTests: XCTestCase {
                      objects: objects.map { .init(name: $0, x: 0.8, meters: 4) }, summary: summary, hFOV: 53)
     }
 
-    func testWallAlertsAtOnceRepeatsOnlyWhileClosingInAndRearmsWhenClear() {
+    func testWallAlertsWhileWalkingRepeatOnlyWhileClosingInAndRearmWhenClear() {
         var p = NarrationPolicy()
-        let first = p.utterances(for: reading(.blocked, what: "wall", meters: 3.4), mode: .normal, now: 0, inConversation: false)
+        func wall(_ m: Double, at t: TimeInterval, _ what: String = "wall") -> SceneReading {
+            var r = reading(.blocked, what: what, meters: m); r.at = t; return r
+        }
+        XCTAssertNotEqual(p.utterances(for: wall(3.4, at: 0), mode: .quiet, now: 0, inConversation: false, moving: false).first?.category, "hazard", "standing still: no alert")
+        let first = p.utterances(for: wall(3.4, at: 0), mode: .normal, now: 0, inConversation: false, moving: true)
         XCTAssertEqual(first.map(\.text), ["Wall ahead, 3 meters."])
         XCTAssertEqual(first.first?.priority, 0)
-        XCTAssertNotEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 3.2), mode: .normal, now: 5, inConversation: false).first?.category, "hazard", "not closer: sitting still is one alert")
-        XCTAssertNotEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 2.2), mode: .normal, now: 2, inConversation: false).first?.category, "hazard", "closer but within 4 s")
-        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 1.2), mode: .normal, now: 6, inConversation: true).map(\.text), ["Wall ahead, close."], "closing in; even mid-conversation")
-        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "wall", meters: 1.0), mode: .quiet, now: 20, inConversation: false), [])
+        XCTAssertNotEqual(p.utterances(for: wall(3.2, at: 5), mode: .normal, now: 5, inConversation: false).first?.category, "hazard", "not closer")
+        XCTAssertNotEqual(p.utterances(for: wall(2.2, at: 2), mode: .normal, now: 2, inConversation: false).first?.category, "hazard", "closer but within 3 s")
+        XCTAssertEqual(p.utterances(for: wall(3.0, at: 4), mode: .normal, now: 6, inConversation: true).map(\.text), ["Wall ahead, 2 meters."], "3 m aged by 2 s of walking; even mid-conversation while walking")
+        XCTAssertEqual(p.utterances(for: wall(1.0, at: 20), mode: .quiet, now: 20, inConversation: false).map(\.text), ["Wall ahead, close."], "once more when it gets close")
         _ = p.utterances(for: reading(), mode: .quiet, now: 21, inConversation: false)
         _ = p.utterances(for: reading(), mode: .quiet, now: 24.5, inConversation: false)
-        XCTAssertEqual(p.utterances(for: reading(.blocked, what: "chair", meters: 1.8), mode: .quiet, now: 25, inConversation: false).map(\.text), ["Chair ahead, 2 meters."], "re-armed after 3 s clear")
+        XCTAssertEqual(p.utterances(for: wall(1.8, at: 25, "chair"), mode: .quiet, now: 25, inConversation: false).map(\.text), ["Chair ahead, 2 meters."], "re-armed after 3 s clear")
+    }
+
+    func testANewObstacleBehindTheOldOneIsAnnounced() {
+        var p = NarrationPolicy()
+        func r(_ what: String, _ m: Double, _ t: TimeInterval) -> SceneReading { var x = reading(.blocked, what: what, meters: m); x.at = t; return x }
+        XCTAssertEqual(p.utterances(for: r("laptop", 0.4, 0), mode: .quiet, now: 0, inConversation: false).map(\.text), ["Laptop ahead, close."])
+        XCTAssertEqual(p.utterances(for: r("wall", 3.5, 4), mode: .quiet, now: 4, inConversation: false).map(\.text), ["Wall ahead, 4 meters."], "the session log case: the wall was never announced")
+        XCTAssertEqual(p.utterances(for: r("wall", 1.2, 8), mode: .quiet, now: 8, inConversation: false).map(\.text), ["Wall ahead, close."])
     }
 
     func testFarCautionIsNotAnAlert() {
@@ -218,34 +230,45 @@ final class PoyoBrainTests: XCTestCase {
         XCTAssertFalse(speaker.texts.contains("Okay."), "the model never confirms consent itself")
     }
 
-    func testFollowUpWindowAndOverheardFilter() async {
+    func testRepliesOnlyAfterAQuestionOrAButtonPressNeverToRoomChatter() async {
         await brain.ask("what's on the table")
-        XCTAssertEqual(vision.prompts.count, 1)
         now += 3
-        await brain.hear(TranscriptSegment(text: "and to my left", start: now, end: now, isFinal: true, speaker: .user))
-        XCTAssertEqual(vision.prompts.count, 2, "follow-up without the wake word")
-        XCTAssertTrue(vision.prompts[1].hasSuffix("[to you] and to my left"))
-        now += 30
-        await brain.hear(TranscriptSegment(text: "yeah that sounds good", start: now, end: now, isFinal: true, speaker: .user))
-        XCTAssertEqual(vision.prompts.count, 2, "small talk is not sent")
-        await brain.hear(TranscriptSegment(text: "nice to meet you", start: now, end: now, isFinal: true, speaker: .other))
-        await brain.hear(TranscriptSegment(text: "where is the exit?", start: now, end: now, isFinal: true, speaker: .user))
-        XCTAssertEqual(vision.prompts.count, 2, "someone else just spoke: it is their conversation")
-        now += 11
-        vision.reply = ["say": "SKIP", "action": "none", "name": NSNull(), "mode": NSNull()]
-        let before = speaker.texts.count
-        await brain.hear(TranscriptSegment(text: "where is the exit?", start: now, end: now, isFinal: true, speaker: .user))
-        XCTAssertEqual(vision.prompts.count, 3)
-        XCTAssertTrue(vision.prompts[2].hasSuffix("[overheard] where is the exit?"))
-        XCTAssertEqual(speaker.texts.count, before, "SKIP is silent")
+        await brain.hear(TranscriptSegment(text: "is there a door", start: now, end: now, isFinal: true, speaker: .user))
+        XCTAssertEqual(vision.prompts.count, 1, "a plain answer opens nothing: in a busy room the next sentence may be anyone's")
+
+        vision.reply = ["say": "Which one, the door or the window?", "action": "none", "name": NSNull(), "mode": NSNull()]
+        await brain.ask("what's that over there")
+        now += 2
+        await brain.hear(TranscriptSegment(text: "the door", start: now, end: now, isFinal: true, speaker: .other))
+        XCTAssertEqual(vision.prompts.count, 3, "Poyo asked, so the next sentence is the reply, whatever the voice split says")
+        XCTAssertTrue(vision.prompts[2].hasSuffix("[to you] the door"))
+        XCTAssertTrue(vision.prompts[2].contains("You last said: Which one, the door or the window?"))
+        await brain.hear(TranscriptSegment(text: "and the window", start: now, end: now, isFinal: true, speaker: .user))
+        XCTAssertEqual(vision.prompts.count, 4, "it asked again, so one more")
+
+        vision.reply = ["say": "A door at 1 o'clock.", "action": "none", "name": NSNull(), "mode": NSNull()]
+        brain.listenNext()                                   // volume button
+        await brain.hear(TranscriptSegment(text: "is there a sign", start: now, end: now, isFinal: true, speaker: .other))
+        XCTAssertEqual(vision.prompts.count, 5, "push-to-talk takes the next sentence")
+        await brain.hear(TranscriptSegment(text: "is there a sign", start: now, end: now, isFinal: true, speaker: .other))
+        XCTAssertEqual(vision.prompts.count, 5, "and only that one")
     }
 
-    func testUncalibratedVoiceSplitDoesNotSilenceFollowUps() async {
-        brain.speakerTrusted = { false }
-        await brain.ask("what's on the table")
+    func testRenameWithoutANameAsksForIt() async {
+        var renamed: [String] = []
+        brain.rename = { renamed.append($0); return Phrasebook.renamed($0) }
+        await brain.ask("can you update his name")
+        XCTAssertEqual(speaker.texts, [Phrasebook.whatName])
+        XCTAssertEqual(vision.prompts.count, 0)
         now += 2
-        await brain.hear(TranscriptSegment(text: "and on my left", start: now, end: now, isFinal: true, speaker: .other))
-        XCTAssertEqual(vision.prompts.count, 2, "the wearer's follow-up, mislabelled as someone else, still counts")
+        await brain.hear(TranscriptSegment(text: "His name is Jagadeep.", start: now - 1, end: now, isFinal: true, speaker: .other))
+        XCTAssertEqual(renamed, ["Jagadeep"])
+        XCTAssertEqual(speaker.texts.last, "Updated. That's Jagadeep now.")
+        XCTAssertEqual(PoyoBrain.spokenName(in: "It's Jagadeep"), "Jagadeep")
+        XCTAssertEqual(PoyoBrain.spokenName(in: "um his name is Jaga Deep please"), "Jaga Deep")
+        XCTAssertNil(PoyoBrain.spokenName(in: "no"))
+        XCTAssertTrue(PoyoBrain.isRenameRequest("Poyo can you change his contact"))
+        XCTAssertFalse(PoyoBrain.isRenameRequest("what is his name"))
     }
 
     func testRenameRequestsAreUnderstoodOnThePhone() async {

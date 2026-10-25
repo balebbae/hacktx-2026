@@ -26,17 +26,22 @@ final class PoyoBrain: ObservableObject {
     private let log = Logger(subsystem: "familiar", category: "brain")
 
     var consentActive: () -> Bool = { false }
+    /// Recent action captions ("Someone crossing, left to right, close."), so "what's going on?" has motion.
+    var actions: () -> String? = { nil }
     var wakeWordCollecting: () -> Bool = { false }
-    /// Whether `.other` really means someone else. False until the wearer calibrates their voice: on the phone mic the
-    /// uncalibrated loudness split labels everyone, the wearer included, as `.other`.
-    var speakerTrusted: () -> Bool = { true }
+    /// Re-transcribes the seconds where a name is said (on-device recognition turns "Jagadeep" into "JD").
+    var scribe: ScribeTranscriber?
+    var audio: AudioChunkClipRecorder?
     /// Renames the remembered person in view (or the one just saved); returns what to say. Set by `FlowRuntime`.
     var rename: (String) async -> String = { _ in Phrasebook.nobodyToUpdate }
     var followUpWindow: TimeInterval = 8
+    var listenWindow: TimeInterval = 8
     var clock: () -> TimeInterval = { CACurrentMediaTime() }
 
     private var followUpUntil: TimeInterval = -.infinity
-    private var lastOtherAt: TimeInterval = -.infinity
+    /// Poyo just asked "What's their name?": the next sentence is the new name.
+    private var awaitingNameUntil: TimeInterval = -.infinity
+    private var lastAnswer: String?
     private var current: Task<Void, Never>?
 
     init(vision: VisionLLM, scene: CloudScene, perception: Perception, transcriber: Transcriber, speaker: Speaker, cueGate: CueGate, router: CommandRouter,
@@ -53,20 +58,35 @@ final class PoyoBrain: ObservableObject {
 
     // MARK: Input
 
-    /// Ongoing speech: the wearer's next sentence after an answer is a follow-up (no wake word needed); otherwise
-    /// only request-like sentences, and only when nobody else spoke in the last 10 s, are offered as [overheard].
+    /// Ongoing speech. In a busy room any sentence may be a stranger's, so Poyo never takes one on its own: only
+    /// "Poyo, …" (the wake word, handled elsewhere), the sentence after a volume-button press (`listenNext`), the
+    /// reply to a question Poyo just asked, and the name it just asked for reach it.
     func hear(_ seg: TranscriptSegment) async {
         guard seg.isFinal, !consentActive() else { return }
         let text = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty, WakeWord.find(in: text) == nil, !wakeWordCollecting() else { return }
         let now = clock()
-        if seg.speaker == .other, speakerTrusted() { lastOtherAt = now; followUpUntil = -.infinity; return }
-        guard WakeWord.find(in: text) == nil, !wakeWordCollecting() else { return }
-        if now <= followUpUntil {
+        if now <= awaitingNameUntil {
+            awaitingNameUntil = -.infinity
+            lines.append(AgentLine(role: .user, text: text))
+            let heard = await scribe?.retranscribe(audio, from: seg.start, to: seg.end) ?? text
+            guard let name = Self.spokenName(in: heard) ?? Self.spokenName(in: text) else { await say(Phrasebook.didNotGetThat); return }
+            await renameAndSay(name)
+        } else if now <= followUpUntil {
+            followUpUntil = -.infinity                  // one reply, then back to silence
             await ask(text)
-        } else if QuestionFilter.isRequestLike(text), now - lastOtherAt > 10 {
-            await ask(text, addressed: false)
         }
+    }
+
+    /// Push-to-talk (volume button): the next sentence within `listenWindow` is for Poyo, no wake word needed.
+    func listenNext() {
+        followUpUntil = clock() + listenWindow
+        lines.append(AgentLine(role: .app, text: "listening"))
+    }
+
+    /// A reply is expected only when Poyo asked something ("Which door, the left one?").
+    private func noteAnswered() {
+        followUpUntil = (lastAnswer?.hasSuffix("?") ?? false) ? clock() + followUpWindow : -.infinity
     }
 
     /// A request addressed to Poyo ("Poyo, …" that the parser did not recognise, a follow-up, or a button).
@@ -74,9 +94,23 @@ final class PoyoBrain: ObservableObject {
         let text = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !consentActive() else { return }
         // "Change their contact to Anish": on the phone, before the command grammar ("call them Anish" is not a call).
+        // The name is re-transcribed from the audio, which spells unusual names far better.
         if addressed, let name = Self.renameTarget(in: text) {
             lines.append(AgentLine(role: .user, text: text))
-            await renameAndSay(name)
+            var better: String?
+            if let seg = transcriber.recentSegments(seconds: 15).last(where: { $0.isFinal && WakeWord.find(in: $0.text) != nil }),
+               let heard = await scribe?.retranscribe(audio, from: seg.start, to: seg.end) {
+                better = Self.renameTarget(in: WakeWord.find(in: heard) ?? heard)
+            }
+            await renameAndSay(better ?? name)
+            return
+        }
+        // "Can you update his name?" with no name yet: ask, and take the next sentence as the name.
+        if addressed, Self.isRenameRequest(text) {
+            lines.append(AgentLine(role: .user, text: text))
+            lines.append(AgentLine(role: .agent, text: Phrasebook.whatName))
+            await say(Phrasebook.whatName)
+            awaitingNameUntil = clock() + 10
             return
         }
         // Built-in commands stay on the phone, except "what's around me", which is what the live view is for.
@@ -84,7 +118,7 @@ final class PoyoBrain: ObservableObject {
             lines.append(AgentLine(role: .user, text: text))
             lines.append(AgentLine(role: .tool, text: "command \(c)"))
             await router.handle(c)
-            followUpUntil = clock() + followUpWindow
+            noteAnswered()
             return
         }
         // "What's around me?" with a scene reading under 4 s old: answer at once from it (people from the phone,
@@ -96,7 +130,7 @@ final class PoyoBrain: ObservableObject {
             lines.append(AgentLine(role: .agent, text: line))
             let t0 = clock()
             if let start = await say(line)?.lowerBound { lastLatency = start - t0 }
-            followUpUntil = clock() + followUpWindow
+            noteAnswered()
             return
         }
         current?.cancel()                       // the newest question wins
@@ -122,9 +156,9 @@ final class PoyoBrain: ObservableObject {
             .map { "\($0.speaker == .other ? "Other" : "Wearer"): \($0.text)" }.joined(separator: "\n")
         let prompt = """
         Wearer: \(userName()). People you may name: \(known.isEmpty ? "none" : known.joined(separator: ", ")).
-        Now: \(WorldModel.contextLine(tracks: perception.currentTracks(), reading: scene.reading, now: t0))\(snapshot == nil ? " (no image right now)" : "")
+        Now: \(WorldModel.contextLine(tracks: perception.currentTracks(), reading: scene.reading, now: t0, actions: actions()))\(snapshot == nil ? " (no image right now)" : "")
         Recent speech:
-        \(speech.isEmpty ? "(none)" : speech)
+        \(speech.isEmpty ? "(none)" : speech)\(lastAnswer.map { "\nYou last said: \($0)" } ?? "")
         \(addressed ? "[to you]" : "[overheard]") \(text)
         """
         let json: [String: Any]
@@ -146,7 +180,7 @@ final class PoyoBrain: ObservableObject {
         if addressed, let command = Self.command(action: json["action"] as? String, name: json["name"] as? String, mode: json["mode"] as? String) {
             lines.append(AgentLine(role: .tool, text: "\(command)"))
             await router.handle(command)          // speaks its own confirmation; remember starts the consent flow
-            followUpUntil = clock() + followUpWindow
+            noteAnswered()
             return
         }
         guard let line = SpeechSanitizer.clean(json["say"] as? String) else {
@@ -154,16 +188,18 @@ final class PoyoBrain: ObservableObject {
             return
         }
         lines.append(AgentLine(role: .agent, text: line))
+        lastAnswer = line
+        defer { noteAnswered() }
         let window = await say(line, priority: addressed ? 0 : 1)
         if let start = window?.lowerBound { lastLatency = start - t0 }
-        followUpUntil = clock() + followUpWindow
+        noteAnswered()
     }
 
     private func renameAndSay(_ name: String) async {
         let reply = await rename(name)
         lines.append(AgentLine(role: .tool, text: "rename → \(reply)"))
         await say(reply)
-        followUpUntil = clock() + followUpWindow
+        noteAnswered()
     }
 
     private static let renamePatterns: [NSRegularExpression] = [
@@ -171,6 +207,22 @@ final class PoyoBrain: ObservableObject {
         "^(?:their|his|her|this person's|that person's|the person's) name is (?:actually )?([a-z][a-z'-]*(?: [a-z][a-z'-]*)?)(?: please| instead.*| not .*)?$",
         "^(?:save|call) (?:them|him|her) (?:as )?([a-z][a-z'-]*)(?: instead.*| not .*)$",
     ].map { try! NSRegularExpression(pattern: $0) }
+
+    static func isRenameRequest(_ text: String) -> Bool {
+        let s = CommandParser.normalize(text)
+        return s.range(of: "\\b(update|change|rename|fix|correct|edit)\\b.*\\b(name|contact)\\b", options: .regularExpression) != nil
+            || s.range(of: "\\bwrong name\\b", options: .regularExpression) != nil
+    }
+
+    /// The name in an answer to "What's their name?": "His name is Jagadeep." / "It's Jagadeep" / "Jagadeep".
+    static func spokenName(in text: String) -> String? {
+        var s = CommandParser.normalize(text)
+        s = s.replacingOccurrences(of: "^(?:(?:um|uh|so|oh|okay|ok) )*(?:(?:his|her|their|the|my) name is|it'?s|it is|that'?s|call (?:him|her|them)|they'?re|he'?s|she'?s|i'?m)\\s+", with: "", options: .regularExpression)
+        s = s.replacingOccurrences(of: "\\b(please|actually|now|instead)\\b", with: "", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+        let words = s.split(separator: " ").prefix(2)
+        guard let first = words.first, first.count >= 2, !["no", "yes", "the", "a", "um", "uh", "him", "her", "them"].contains(String(first)) else { return nil }
+        return words.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+    }
 
     /// "update their contact to be Anish instead of someone I know" → "Anish".
     static func renameTarget(in text: String) -> String? {

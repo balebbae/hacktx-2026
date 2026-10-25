@@ -124,6 +124,7 @@ final class SpokenConsentFlow: ConsentFlow {
         if name == nil { name = await askForName() }
         if Task.isCancelled { return }
         let phone = await askForNumber(name: name)
+        if let typed = typedName { name = typed }          // their own spelling beats what was heard
         if Task.isCancelled { return }
         await save(track: target.trackID, gathered: gathered, name: name, phone: phone, kind: kind, question: question, reply: reply, clip: (clipStart, replyEnd))
     }
@@ -166,6 +167,7 @@ final class SpokenConsentFlow: ConsentFlow {
         if name == nil { name = await askForName(coachWearer: true) }
         if Task.isCancelled { return }
         let phone = await askForNumber(name: name)
+        if let typed = typedName { name = typed }          // their own spelling beats what was heard
         if Task.isCancelled { return }
         await save(track: target.trackID, gathered: gathered, name: name ?? config.fallbackName, phone: phone, kind: kind, question: "Asked by \(userName()): \(asked)", reply: reply, clip: (listenStart, replyEnd))
     }
@@ -191,6 +193,7 @@ final class SpokenConsentFlow: ConsentFlow {
         acceptedSpeakers = [.other, .none, .user]
         collectingOnly = true
         typedNumber = nil
+        typedName = nil
         defer { collectingOnly = false; acceptedSpeakers = [.other, .none]; numberRequestBus.publish(nil); typedNumber = nil }
         notBefore = clock()
         await coach(Phrasebook.coachHandPhone(name: name))
@@ -408,12 +411,18 @@ final class SpokenConsentFlow: ConsentFlow {
     private let numberRequestBus = EventBus<NumberRequest?>()
     /// `.some(nil)` = skipped on the card.
     private var typedNumber: String??
+    /// The name as the person typed it on the card (they can fix "JD" to "Jagadeep").
+    private var typedName: String?
 
     /// Non-nil while the card should show the number pad (the other person holds the phone).
     func numberRequests() -> AsyncStream<NumberRequest?> { numberRequestBus.subscribe() }
 
-    /// From the card: the typed number, or nil for "Skip".
-    func enterNumber(_ text: String?) { typedNumber = .some(text) }
+    /// From the card: the typed number (nil for "Skip") and, if they edited it, their name.
+    func enterNumber(_ text: String?, name: String? = nil) {
+        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        typedName = (n?.isEmpty ?? true) ? nil : n
+        typedNumber = .some(text)
+    }
     private var holdUnclear = false
     private var heardUnclear = false
 

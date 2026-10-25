@@ -134,8 +134,14 @@ extension Phrasebook {
         out += [shouldIAdd, scanningFace, lookTowardMe, wasThatAYes, whatShouldICallYou, nothingSaved, theyLeft]
         out += ChatterMode.allCases.map(mode)
         out += [muted, unmuted, didNotGetThat]
-        // The vision alerts most likely in a demo room, so they play without a TTS round trip.
-        for thing in ["wall", "door", "glass door", "chair", "table", "obstacle", "pillar"] {
+        out += alertPhrases
+        return out
+    }
+
+    /// The vision alerts most likely indoors, so they play without a TTS round trip (prewarmed at every start).
+    static var alertPhrases: [String] {
+        var out: [String] = []
+        for thing in ["wall", "door", "glass door", "chair", "table", "couch", "counter", "desk", "obstacle", "pillar", "stairs"] {
             for m in [nil, 1.0, 2, 3, 4] as [Double?] { out.append(pathAlert(what: thing, bearing: .atClock(12), meters: m)) }
             for hour in [11, 1] { out.append(pathAlert(what: thing, bearing: .atClock(hour), meters: 1)) }
         }

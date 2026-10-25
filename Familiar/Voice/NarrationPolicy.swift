@@ -2,19 +2,23 @@ import Foundation
 
 /// Decides what, if anything, to say about a new vision reading. Pure with respect to `now`.
 ///
-///   path      blocked/caution within `alertMeters` (4 m) → priority 0 at once ("Wall ahead, 2 meters."); repeats only
-///             while the wearer closes in (at least `approachMeters` nearer, `pathRepeat` apart), so sitting at a
-///             table is one alert, not one every few seconds; re-arms after `rearmClear` seconds of clear path.
+///   Alerts only while the wearer walks: standing still (talking, at a table) the couch and the laptop are noise.
+///   path      blocked/caution within `alertMeters` (4 m) → priority 0 at once ("Wall ahead, 2 meters."). The
+///             distance is aged by `walkSpeed` × the reading's age. Repeats while the wearer closes in (at least
+///             `approachMeters` nearer, `pathRepeat` apart, and once more when it gets close); a different or farther
+///             obstacle starts over; re-arms after `rearmClear` seconds of clear path.
 ///   hazards   within `hazardMeters` → priority 0, once per kind per `hazardCooldown`; at most one per reading.
-///   gist      the model's one-line summary, priority 2, only when the scene changed (new place or a different set
-///             of objects), at most every 20 s (normal) / 8 s (chatty), never in quiet mode, never while a
-///             conversation is going on, never a near-repeat of the last three lines.
+///   gist      the model's one-line summary, priority 2, only while walking (chatty: also standing), only when the
+///             scene changed (new place or a different set of objects), at most every 20 s (normal) / 8 s (chatty),
+///             never in quiet mode, never face to face with someone, never a near-repeat of the last three lines.
 struct NarrationPolicy {
     struct Config {
         /// Generous on purpose: a reading is about 2.5 s old when it arrives, and the wearer may be walking.
         var alertMeters = 4.0
         var hazardMeters = 4.0
-        var pathRepeat: TimeInterval = 4
+        var pathRepeat: TimeInterval = 3
+        /// m/s: a slow walk with a cane, used to age a reading's distances.
+        var walkSpeed = 0.7
         var approachMeters = 1.0
         var rearmClear: TimeInterval = 3
         var hazardCooldown: TimeInterval = 10
@@ -26,6 +30,7 @@ struct NarrationPolicy {
     var config = Config()
     private var lastPathAlert: TimeInterval?
     private var lastAlertMeters = Double.infinity
+    private var lastAlertWhat: String?
     private var clearSince: TimeInterval?
     private var hazardSpoken: [String: TimeInterval] = [:]
     private var lastGistAt: TimeInterval?
@@ -35,25 +40,38 @@ struct NarrationPolicy {
 
     init(config: Config = Config()) { self.config = config }
 
-    mutating func utterances(for r: SceneReading, mode: ChatterMode, now: TimeInterval, inConversation: Bool) -> [Utterance] {
-        if let u = pathAlert(r, now: now) { return [u] }
-        if let u = hazard(r, now: now) { return [u] }
-        if let u = gist(r, mode: mode, now: now, inConversation: inConversation) { return [u] }
+    mutating func utterances(for r: SceneReading, mode: ChatterMode, now: TimeInterval, inConversation: Bool, moving: Bool = true) -> [Utterance] {
+        if moving, let u = pathAlert(r, now: now) { return [u] }
+        if moving, let u = hazard(r, now: now) { return [u] }
+        // Scene updates while walking (chatty: standing too). Standing in a crowd, the room changes every second
+        // and none of it is news; "Poyo, what's around me?" still answers.
+        if moving || mode == .chatty, let u = gist(r, mode: mode, now: now, inConversation: inConversation) { return [u] }
         return []
     }
 
     private mutating func pathAlert(_ r: SceneReading, now: TimeInterval) -> Utterance? {
-        let meters = r.pathMeters ?? (r.path == .blocked ? config.alertMeters : nil)
-        guard r.path != .clear, let m = meters, m <= config.alertMeters else {
+        let reported = r.pathMeters ?? (r.path == .blocked ? config.alertMeters : nil)
+        guard r.path != .clear, let reported, reported <= config.alertMeters else {
             if clearSince == nil { clearSince = now }
-            if let since = clearSince, now - since >= config.rearmClear { lastPathAlert = nil; lastAlertMeters = .infinity }
+            if let since = clearSince, now - since >= config.rearmClear { lastPathAlert = nil; lastAlertMeters = .infinity; lastAlertWhat = nil }
             return nil
         }
         clearSince = nil
-        if let last = lastPathAlert, now - last < config.pathRepeat || m > lastAlertMeters - config.approachMeters { return nil }
+        let m = max(0, reported - config.walkSpeed * max(0, now - r.at))
+        let what = r.pathWhat?.lowercased()
+        // A different thing, or one farther than the last alert (the laptop then the wall behind it): a new obstacle.
+        if (what != nil && lastAlertWhat != nil && what != lastAlertWhat) || m > lastAlertMeters + config.approachMeters {
+            lastPathAlert = nil; lastAlertMeters = .infinity
+        }
+        if let last = lastPathAlert {
+            let closer = m <= lastAlertMeters - config.approachMeters
+            let nowClose = m < 1.5 && lastAlertMeters >= 1.5
+            guard now - last >= config.pathRepeat, closer || nowClose else { return nil }
+        }
         lastPathAlert = now
         lastAlertMeters = m
-        return Self.alert(Phrasebook.pathAlert(what: r.pathWhat, bearing: r.bearing(r.pathX), meters: r.pathMeters), key: "path")
+        lastAlertWhat = what ?? lastAlertWhat
+        return Self.alert(Phrasebook.pathAlert(what: r.pathWhat, bearing: r.bearing(r.pathX), meters: r.pathMeters.map { _ in m }), key: "path")
     }
 
     private mutating func hazard(_ r: SceneReading, now: TimeInterval) -> Utterance? {

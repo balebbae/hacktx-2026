@@ -9,8 +9,10 @@ struct ConsentCardView: View {
     /// Set once they agreed and the wearer handed them the phone: show the number pad instead of YES / NO.
     var numberEntry: SpokenConsentFlow.NumberRequest? = nil
     var userName = ""
-    var onNumber: (String?) -> Void = { _ in }
+    /// The typed number (nil = Skip) and the name as shown, possibly corrected by the person.
+    var onNumber: (String?, String) -> Void = { _, _ in }
     @State private var number = ""
+    @State private var name = ""
     @FocusState private var numberFocused: Bool
 
     var body: some View {
@@ -25,6 +27,14 @@ struct ConsentCardView: View {
                 .font(.system(.title2, design: .rounded).weight(.semibold))
                 .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
+            TextField("Your name", text: $name)
+                .textContentType(.givenName)
+                .font(.system(size: 28, weight: .semibold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .padding()
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color(.secondarySystemBackground)))
+                .accessibilityLabel("Your name")
+                .accessibilityHint("Fix the spelling if it is wrong")
             TextField("Phone number", text: $number)
                 .keyboardType(.phonePad)
                 .textContentType(.telephoneNumber)
@@ -35,10 +45,10 @@ struct ConsentCardView: View {
                 .focused($numberFocused)
                 .accessibilityHint("Your number is saved only in this phone's contacts")
             HStack(spacing: 16) {
-                Button { onNumber(nil) } label: { Text("Skip").font(.title2.weight(.bold)).frame(maxWidth: .infinity, minHeight: 72) }
+                Button { onNumber(nil, name) } label: { Text("Skip").font(.title2.weight(.bold)).frame(maxWidth: .infinity, minHeight: 72) }
                     .buttonStyle(.bordered)
                     .accessibilityHint("Saves the contact without a number")
-                Button { onNumber(number) } label: { Text("Save").font(.title2.weight(.heavy)).frame(maxWidth: .infinity, minHeight: 72) }
+                Button { onNumber(number, name) } label: { Text("Save").font(.title2.weight(.heavy)).frame(maxWidth: .infinity, minHeight: 72) }
                     .buttonStyle(.borderedProminent).tint(.green)
                     .disabled(PhoneNumber.digits(in: number).count < 7)
                     .accessibilityHint("Saves this number with your contact")
@@ -47,7 +57,7 @@ struct ConsentCardView: View {
         }
         .padding(24)
         .background(Color(.systemBackground))
-        .onAppear { numberFocused = true }
+        .onAppear { name = entry.name ?? ""; numberFocused = true }
     }
 
     private func question(view: Void) -> some View {

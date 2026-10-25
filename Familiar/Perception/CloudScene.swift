@@ -63,8 +63,9 @@ struct SceneReading: Equatable {
 
     static let systemPrompt = """
     You are the eyes of a blind person walking with camera glasses. The image is their view right now. \
-    Every face is blacked out on purpose: ignore people completely. Never mention, count or describe people, their \
-    clothes or bodies, and never mention the black boxes. Report only what helps them move safely and know where they are.
+    Every face is blacked out on purpose. Never describe people, their clothes or bodies, never count them, and never \
+    mention the black boxes. The one exception: if a person stands in the walking corridor, path.what is "person" \
+    and nothing more. Report only what helps them move safely and know where they are.
     path: the walking corridor straight ahead (centre 40% of the image, floor up to head height). status is blocked if a \
     wall, closed door, furniture or any object is in that corridor within 4 m; caution if within 4 to 7 m or the way \
     narrows; otherwise clear. what: the thing in 1 or 2 words (wall, door, chair, table, pillar, glass door). x: its \
@@ -140,6 +141,9 @@ enum FrameRedactor {
 final class CloudScene: @unchecked Sendable {
     var captureInterval: TimeInterval = 0.25
     var minInterval: TimeInterval = 1.5
+    /// While walking: a reading every second, two in flight, so the newest one is never more than ~3 s old.
+    var walkingInterval: TimeInterval = 1.0
+    var isMoving: () -> Bool = { false }
     var heartbeat: TimeInterval = 6
     var changeThreshold: Float = 0.06
     /// Face boxes perception already tracks (normalized, top-left origin); blacked out on top of a fresh detection.
@@ -151,7 +155,7 @@ final class CloudScene: @unchecked Sendable {
     private struct State {
         var latest: Latest?
         var reading: SceneReading?
-        var inFlight = false
+        var inFlight = 0
         var lastSentAt: TimeInterval = -.infinity
         var lastSentThumb: [Float]?
         var lastUpload: CGImage?
@@ -191,7 +195,7 @@ final class CloudScene: @unchecked Sendable {
 
     func stop() {
         task?.cancel(); task = nil
-        state.withLock { $0.latest = nil; $0.inFlight = false }
+        state.withLock { $0.latest = nil; $0.inFlight = 0 }
     }
 
     /// Freshest view with every face blacked out, for a question. nil when there is no frame yet or face detection
@@ -210,12 +214,13 @@ final class CloudScene: @unchecked Sendable {
 
     /// Keeps `latest` and returns it when a scene request is due.
     private func store(_ latest: Latest) -> Latest? {
-        state.withLock { s in
+        let moving = isMoving()
+        return state.withLock { s in
             s.latest = latest
-            guard !s.inFlight, latest.t - s.lastSentAt >= minInterval else { return nil }
+            guard s.inFlight < (moving ? 2 : 1), latest.t - s.lastSentAt >= (moving ? walkingInterval : minInterval) else { return nil }
             let changed = s.lastSentThumb.map { FrameRedactor.difference($0, latest.thumb) > changeThreshold } ?? true
-            guard changed || latest.t - s.lastSentAt >= heartbeat else { return nil }
-            s.inFlight = true
+            guard changed || moving || latest.t - s.lastSentAt >= heartbeat else { return nil }
+            s.inFlight += 1
             s.lastSentAt = latest.t
             s.lastSentThumb = latest.thumb
             return latest
@@ -228,7 +233,7 @@ final class CloudScene: @unchecked Sendable {
     }
 
     private func read(_ latest: Latest) async {
-        defer { state.withLock { $0.inFlight = false } }
+        defer { state.withLock { $0.inFlight -= 1 } }
         guard let image = redact(latest.image), let jpeg = FrameRedactor.jpeg(image) else {
             state.withLock { $0.status.lastError = "face check unavailable: nothing uploaded" }
             log.error("face check unavailable: nothing uploaded")
@@ -240,7 +245,10 @@ final class CloudScene: @unchecked Sendable {
             let json = try await client.complete(system: SceneReading.systemPrompt, text: "What matters for walking right now?", imageJPEG: jpeg,
                                                  schemaName: "SceneReading", schema: SceneReading.schema, maxTokens: 700, cacheKey: "poyo-scene-v1", timeout: 10)
             guard let reading = SceneReading(json: json, at: latest.t, hFOV: latest.hFOV) else { throw MetaModelClient.ClientError.malformed }
+            // Two requests can be in flight: never let an older answer replace a newer one.
+            let stale = state.withLock { s in (s.reading?.at ?? -.infinity) > reading.at }
             state.withLock { $0.status.lastLatency = CACurrentMediaTime() - started; $0.status.lastError = nil }
+            if stale { return }
             log.info("scene \(reading.path.rawValue, privacy: .public) \(reading.pathMeters ?? -1) m in \(CACurrentMediaTime() - started, format: .fixed(precision: 1)) s: \(reading.summary, privacy: .public)")
             ingest(reading)
         } catch {
