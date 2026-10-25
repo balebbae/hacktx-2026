@@ -6,6 +6,7 @@ struct DemoControlsView: View {
     @EnvironmentObject var coordinator: AppCoordinator
     @EnvironmentObject var runtime: FlowRuntime
     @AppStorage(UserSettings.autoReplyInSimulator) private var autoReply = false
+    @AppStorage(UserSettings.selfEnrollUseFixture) private var selfEnrollUseFixture = SelfEnrollFactory.useFixtureDefault
     @State private var customReply = ""
     @State private var confirmReset = false
     @State private var prewarmStatus: String?
@@ -43,6 +44,12 @@ struct DemoControlsView: View {
                 }
                 LabeledContent("Consent state", value: consentLabel)
                 LabeledContent("Name guess", value: runtime.nameGuess?.name.map { "\($0) (\(runtime.nameGuess?.source ?? ""), \(String(format: "%.1f", runtime.nameGuess?.confidence ?? 0)))" } ?? "none")
+            }
+            Section("Introduce yourself") {
+                Toggle("Use the enroll_marcus clip instead of the front camera", isOn: $selfEnrollUseFixture)
+                    .accessibilityHint("On in the Simulator, which has no camera")
+                Button { coordinator.handle(url: URL(string: "familiar://introduce")!) } label: { Label("Simulate the NFC tag (familiar://introduce)", systemImage: "wave.3.right.circle") }
+                    .accessibilityHint("Opens the introduce screen the way a tag would")
             }
             Section("Voice") {
                 Button { prewarm() } label: { Label("Re-prewarm phrases", systemImage: "flame") }
