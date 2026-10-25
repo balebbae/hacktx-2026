@@ -39,3 +39,8 @@ Phone camera · Glasses · Fixture: <clip>. Glasses: Meta AI app → Settings �
 - `Secrets.xcconfig` also carries `DEVELOPMENT_TEAM` for device signing; the Modal URL is written `https:$()/$()/host`.
 - Tests: `AppCoordinator.isRunningTests` keeps the live pipeline off while the app is only the XCTest host. 150 tests, 2 skipped (unsigned DAT mock, live ElevenLabs prewarm) on `main`.
 - Still human-only: real glasses stream, A2DP/HFP route switching, SpeechAnalyzer asset download, Contacts/Location prompts, Vision landmarks on device (Simulator falls back to rectangle alignment).
+
+## S7: who is talking to me (merged from PR #6)
+- `Familiar/Perception/ActiveSpeaker.swift`: VAD `.other` speech + mouth-openness variance over 1 s (threshold 0.0015, sustained 0.6 s) on known, facing tracks only. One `speakingStarted` per person per track-session, 5 min reset, 2 s cooldown between speakers, never for unknown tracks. Wired in `Services.make` on the real pipeline; `ScriptedPerception` scripts the event itself.
+- Cue "{Name}." is priority 1, no earcon, played at -6 dB (`SpeakerVolumeHint`).
+- Simulator cannot exercise it (Vision landmarks fall back to the box, so `mouthOpenness` is nil); 12 unit tests cover the detector. On the iPhone: Marcus talks -> "Marcus." once; stranger talks -> nothing; wearer talks -> nothing.
